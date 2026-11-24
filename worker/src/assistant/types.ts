@@ -1,6 +1,12 @@
+import type {
+  Category,
+  FieldChange,
+  PolicyVerdictDto,
+  ReceiptAnalysisDto,
+  SpendingSummaryDto,
+} from "../../../shared/contract";
 import type { LlmClient } from "../llm/types";
 import type { Expense } from "../services/expenses";
-import type { ReceiptAnalysis } from "./receipts";
 
 export interface AssistantConfig {
   /** Model requests one user may cause per day. */
@@ -46,6 +52,45 @@ export type AssistantErrorCode =
   | "invalid_image"
   | "image_too_large"
   | "extraction_failed";
+
+/** What was read from a receipt, validated. Same shape on every channel. */
+export type ReceiptAnalysis = ReceiptAnalysisDto;
+
+/**
+ * A card as it is stored with a message. An expense is referenced by id, not
+ * copied: whoever shows the card looks up the expense's current state, so an
+ * old card can truthfully say "replaced" or "submitted".
+ */
+export type StoredCard =
+  | {
+      kind: "expense";
+      event: "drafted" | "updated" | "submitted" | "cancelled";
+      expenseId: number;
+      changes?: FieldChange[];
+    }
+  | { kind: "receipt"; analysis: ReceiptAnalysis; expenseId?: number }
+  | {
+      kind: "policy_check";
+      category: Category;
+      amountCents: number;
+      limitCents: number;
+      verdict: PolicyVerdictDto;
+    }
+  | { kind: "summary"; summary: SpendingSummaryDto; from?: string; to?: string };
+
+/** Structured data stored next to a message's text (the `meta` column). */
+export interface MessageMeta {
+  /**
+   * The assistant's own sentence, without the notices that code appends for
+   * text-only channels. A channel that shows the card shows this instead of
+   * the full text.
+   */
+  lead?: string;
+  /** On a user message: a receipt photo was sent. The image is not stored. */
+  attachment?: "receipt_photo";
+  card?: StoredCard;
+  error?: AssistantErrorCode;
+}
 
 export interface AssistantReply {
   /** Text to show the user. Always present, also when something failed. */

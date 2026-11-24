@@ -18,6 +18,7 @@ const cafeAurora = {
   merchant: "Cafe Aurora",
   total: 48.5,
   currency: "USD",
+  currency_evidence: "code",
   date: "2026-11-23",
   category: "meals",
   description: "Lunch for two",

@@ -185,9 +185,33 @@ export async function createDraft(
         verdict.outcome,
         policyNotes,
       ),
+    // A receipt that was waiting for details has now become (or been overtaken by) a draft.
+    db.prepare("DELETE FROM pending_receipts WHERE user_id = ?").bind(userId),
   ]);
 
   return { outcome: "drafted", expense: toExpense(inserted!.results[0]!) };
+}
+
+/** The given expenses, as far as they belong to this user. Ids of other users' expenses are ignored. */
+export async function getExpensesByIds(
+  db: D1Database,
+  userId: number,
+  ids: number[],
+): Promise<Expense[]> {
+  assertPositiveInt(userId, "User id");
+  const unique = [...new Set(ids)].slice(0, 100);
+  if (unique.length === 0) return [];
+  for (const id of unique) assertPositiveInt(id, "Expense id");
+
+  const { results } = await db
+    .prepare(
+      `SELECT ${COLUMNS} FROM expenses
+       WHERE user_id = ? AND id IN (${unique.map(() => "?").join(", ")})
+       ORDER BY id`,
+    )
+    .bind(userId, ...unique)
+    .all<ExpenseRow>();
+  return results.map(toExpense);
 }
 
 export async function getActiveDraft(db: D1Database, userId: number): Promise<Expense | null> {

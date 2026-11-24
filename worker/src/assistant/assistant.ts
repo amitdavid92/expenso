@@ -3,15 +3,23 @@ import { MAX_MESSAGE_LENGTH, appendMessage, listRecentMessages } from "../servic
 import { cancelDraft, confirmExpense, getActiveDraft } from "../services/expenses";
 import { describeExpense, draftNotice, submittedNotice } from "./format";
 import { ERROR_TEXT, TurnFailure, createModelCaller } from "./model-caller";
+import { clearPendingReceipt, getPendingReceipt } from "./pending-receipts";
 import { buildSystemPrompt } from "./prompt";
 import { TOOL_DECLARATIONS, executeTool } from "./tools";
-import type { AssistantDeps, AssistantErrorCode, AssistantReply, TurnErrorCode } from "./types";
+import type {
+  AssistantDeps,
+  AssistantErrorCode,
+  AssistantReply,
+  MessageMeta,
+  StoredCard,
+  TurnErrorCode,
+} from "./types";
 
 export type { AssistantConfig, AssistantDeps, AssistantErrorCode, AssistantReply } from "./types";
 
 /**
  * The assistant, independent of any channel. Web and Telegram adapters call
- * the three functions exported here and render what comes back.
+ * the functions exported here and render what comes back.
  *
  *   handleMessage     a text message from the user
  *   handleReceipt     a photo of a receipt (see receipts.ts)
@@ -20,10 +28,41 @@ export type { AssistantConfig, AssistantDeps, AssistantErrorCode, AssistantReply
  *
  * The model can read data and prepare or discard a draft. Submitting is only
  * ever done by code in this file, in response to an explicit user action.
+ *
+ * Every reply is stored twice over: as complete text (enough for a text-only
+ * channel) and, where there is something structured to show, as a card.
  */
 
 const MAX_USER_MESSAGE_LENGTH = 2000;
 const HISTORY_LIMIT = 20;
+
+/** What a turn says: the full text, plus optional structure for richer channels. */
+interface Outcome {
+  text: string;
+  /** The sentence to show beside a card, when it differs from `text`. */
+  lead?: string;
+  card?: StoredCard;
+  error?: AssistantErrorCode;
+}
+
+/** Stores the assistant's words and returns the reply together with the current draft. Every turn ends here. */
+export async function finish(
+  deps: AssistantDeps,
+  userId: number,
+  outcome: Outcome,
+): Promise<AssistantReply> {
+  const text = outcome.text.slice(0, MAX_MESSAGE_LENGTH);
+  const meta: MessageMeta = {};
+  if (outcome.lead !== undefined && outcome.lead !== text) meta.lead = outcome.lead;
+  if (outcome.card) meta.card = outcome.card;
+  if (outcome.error) meta.error = outcome.error;
+
+  await appendMessage(deps.db, userId, "assistant", text, meta);
+  const pendingExpense = await getActiveDraft(deps.db, userId);
+  return outcome.error
+    ? { reply: text, pendingExpense, error: outcome.error }
+    : { reply: text, pendingExpense };
+}
 
 // ── Explicit confirm / cancel ───────────────────────────────────────────────
 
@@ -38,47 +77,50 @@ function parseCommand(text: string): Command | null {
   return word === "confirm" || word === "cancel" ? word : null;
 }
 
-async function confirmText(deps: AssistantDeps, userId: number, expenseId: number): Promise<string> {
+async function confirm(deps: AssistantDeps, userId: number, expenseId: number): Promise<Outcome> {
   const now = (deps.now ?? (() => new Date()))();
   const result = await confirmExpense(deps.db, userId, expenseId, now);
   switch (result.outcome) {
     case "submitted":
-      return submittedNotice(result.expense);
+      return {
+        text: submittedNotice(result.expense),
+        lead: "Submitted.",
+        card: { kind: "expense", event: "submitted", expenseId },
+      };
     case "already_submitted":
-      return `That expense was already submitted: ${describeExpense(result.expense)}`;
+      return {
+        text: `That expense was already submitted: ${describeExpense(result.expense)}`,
+        lead: "That expense was already submitted.",
+        card: { kind: "expense", event: "submitted", expenseId },
+      };
     case "blocked":
-      return `This draft can no longer be submitted. ${result.reasons.join(" ")} Type "cancel" to discard it, or tell me the corrected details.`;
+      return {
+        text: `This draft can no longer be submitted. ${result.reasons.join(" ")} Type "cancel" to discard it, or tell me the corrected details.`,
+      };
     case "not_active":
-      return "That draft is no longer active. It was cancelled or replaced by a newer one.";
+      return { text: "That draft is no longer active. It was cancelled or replaced by a newer one." };
     case "not_found":
-      return "I couldn't find that draft.";
+      return { text: "I couldn't find that draft." };
   }
 }
 
-async function cancelText(deps: AssistantDeps, userId: number, expenseId: number): Promise<string> {
+async function cancel(deps: AssistantDeps, userId: number, expenseId: number): Promise<Outcome> {
   const result = await cancelDraft(deps.db, userId, expenseId);
   switch (result.outcome) {
     case "cancelled":
     case "already_cancelled":
-      return `Draft discarded: ${describeExpense(result.expense)}`;
+      return {
+        text: `Draft discarded: ${describeExpense(result.expense)}`,
+        lead: "Draft discarded.",
+        card: { kind: "expense", event: "cancelled", expenseId },
+      };
     case "already_submitted":
-      return `That expense was already submitted, so it can't be cancelled here: ${describeExpense(result.expense)}`;
+      return {
+        text: `That expense was already submitted, so it can't be cancelled here: ${describeExpense(result.expense)}`,
+      };
     case "not_found":
-      return "I couldn't find that draft.";
+      return { text: "I couldn't find that draft." };
   }
-}
-
-/** Stores the assistant's words and returns the reply together with the current draft. Every turn ends here. */
-export async function finish(
-  deps: AssistantDeps,
-  userId: number,
-  reply: string,
-  error?: AssistantErrorCode,
-): Promise<AssistantReply> {
-  const text = reply.slice(0, MAX_MESSAGE_LENGTH);
-  await appendMessage(deps.db, userId, "assistant", text);
-  const pendingExpense = await getActiveDraft(deps.db, userId);
-  return error ? { reply: text, pendingExpense, error } : { reply: text, pendingExpense };
 }
 
 /** The user pressed Confirm on one specific draft. No model involved. */
@@ -86,7 +128,7 @@ export async function confirmDraftById(
   deps: AssistantDeps,
   input: { userId: number; expenseId: number },
 ): Promise<AssistantReply> {
-  return finish(deps, input.userId, await confirmText(deps, input.userId, input.expenseId));
+  return finish(deps, input.userId, await confirm(deps, input.userId, input.expenseId));
 }
 
 /** The user pressed Cancel on one specific draft. No model involved. */
@@ -94,15 +136,19 @@ export async function cancelDraftById(
   deps: AssistantDeps,
   input: { userId: number; expenseId: number },
 ): Promise<AssistantReply> {
-  return finish(deps, input.userId, await cancelText(deps, input.userId, input.expenseId));
+  return finish(deps, input.userId, await cancel(deps, input.userId, input.expenseId));
 }
 
-async function runCommand(deps: AssistantDeps, userId: number, command: Command): Promise<string> {
+async function runCommand(deps: AssistantDeps, userId: number, command: Command): Promise<Outcome> {
   const draft = await getActiveDraft(deps.db, userId);
-  if (!draft) return `There is no draft to ${command}.`;
-  return command === "confirm"
-    ? confirmText(deps, userId, draft.id)
-    : cancelText(deps, userId, draft.id);
+  if (draft) {
+    return command === "confirm" ? confirm(deps, userId, draft.id) : cancel(deps, userId, draft.id);
+  }
+  // No draft, but a half-read receipt may be waiting: "cancel" drops that too.
+  if (command === "cancel" && (await clearPendingReceipt(deps.db, userId))) {
+    return { text: "Receipt details discarded." };
+  }
+  return { text: `There is no draft to ${command}.` };
 }
 
 // ── Guard against false "submitted" claims ──────────────────────────────────
@@ -131,6 +177,8 @@ interface TurnResult {
   text: string;
   error?: TurnErrorCode;
   draftChanged: boolean;
+  /** The most relevant card produced by the tools that ran, if any. */
+  card?: StoredCard;
 }
 
 async function runModelTurn(
@@ -139,15 +187,20 @@ async function runModelTurn(
   messages: LlmMessage[],
   now: Date,
 ): Promise<TurnResult> {
-  const system = buildSystemPrompt({ now, activeDraft: await getActiveDraft(deps.db, userId) });
+  const system = buildSystemPrompt({
+    now,
+    activeDraft: await getActiveDraft(deps.db, userId),
+    pendingReceipt: await getPendingReceipt(deps.db, userId),
+  });
   const callModel = createModelCaller(deps, userId, now);
   let draftChanged = false;
+  let card: StoredCard | undefined;
 
   try {
     for (;;) {
       const response = await callModel({ system, messages, tools: TOOL_DECLARATIONS });
       if (response.toolCalls.length === 0) {
-        return { text: response.text, draftChanged };
+        return { text: response.text, draftChanged, card };
       }
 
       // The model's output goes back verbatim (see LlmMessage "assistant_raw").
@@ -156,6 +209,10 @@ async function runModelTurn(
       for (const toolCall of response.toolCalls) {
         const outcome = await executeTool({ db: deps.db, userId, now }, toolCall);
         draftChanged ||= outcome.draftChanged === true;
+        // One card per reply. A change to the draft matters more than a lookup.
+        if (outcome.card && (outcome.card.kind === "expense" || card?.kind !== "expense")) {
+          card = outcome.card;
+        }
         results.push({ id: toolCall.id, name: toolCall.name, result: outcome.result });
       }
       messages.push({ role: "tool_results", results });
@@ -163,7 +220,7 @@ async function runModelTurn(
   } catch (error) {
     if (!(error instanceof TurnFailure)) throw error;
     // Tools that already ran keep their effect; the reply reports the true state.
-    return { text: ERROR_TEXT[error.code], error: error.code, draftChanged };
+    return { text: ERROR_TEXT[error.code], error: error.code, draftChanged, card };
   }
 }
 
@@ -206,9 +263,9 @@ export async function handleMessage(
   const turn = await runModelTurn(deps, userId, messages, now);
 
   const draft = await getActiveDraft(deps.db, userId);
-  let reply = turn.error ? turn.text : withoutFalseClaims(turn.text, turn.draftChanged, draft !== null);
+  const lead = turn.error ? turn.text : withoutFalseClaims(turn.text, turn.draftChanged, draft !== null);
   // The state of a new or changed draft is always reported by code, whatever the model said.
-  if (turn.draftChanged && draft) reply += `\n\n${draftNotice(draft)}`;
+  const reply = turn.draftChanged && draft ? `${lead}\n\n${draftNotice(draft)}` : lead;
 
-  return finish(deps, userId, reply, turn.error);
+  return finish(deps, userId, { text: reply, lead, card: turn.card, error: turn.error });
 }

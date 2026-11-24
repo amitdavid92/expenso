@@ -1,3 +1,5 @@
+import type { FieldChange } from "../../../shared/contract";
+import { utcDay } from "../lib/dates";
 import { ValidationError } from "../lib/errors";
 import { formatCents, toCents } from "../lib/money";
 import {
@@ -9,8 +11,9 @@ import {
   getSpendingSummary,
   listExpenses,
 } from "../services/expenses";
-import { CATEGORIES, type Category, POLICY } from "../services/policy";
+import { CATEGORIES, type Category, POLICY, evaluateExpense } from "../services/policy";
 import type { ToolCall, ToolDeclaration } from "../llm/types";
+import type { StoredCard } from "./types";
 
 /**
  * The only things the model can do. Each tool is a thin wrapper over a
@@ -33,6 +36,8 @@ export interface ToolOutcome {
   result: Record<string, unknown>;
   /** True when the user's draft was created, replaced or cancelled. */
   draftChanged?: boolean;
+  /** Structured content a channel can show next to the reply. Built by code from the same data as `result`. */
+  card?: StoredCard;
 }
 
 const isoDate = { type: "string", description: "Calendar date as YYYY-MM-DD." };
@@ -42,10 +47,16 @@ export const TOOL_DECLARATIONS: ToolDeclaration[] = [
   {
     name: "get_policy",
     description:
-      "Look up the company expense policy: per-expense limits by category, the currency, and how old an expense may be. Use it for any question about what is allowed.",
+      "Look up the company expense policy: per-expense limits by category, the currency, and how old an expense may be. Use it for any question about what is allowed. To check whether a specific amount would be allowed, pass both category and amount.",
     parameters: {
       type: "object",
-      properties: { category: { ...category, description: "Only return this category's limit." } },
+      properties: {
+        category: { ...category, description: "Only return this category's limit." },
+        amount: {
+          type: "number",
+          description: "An amount in dollars to check against the category limit. Needs category.",
+        },
+      },
     },
   },
   {
@@ -122,14 +133,35 @@ function expenseView(expense: Expense) {
   };
 }
 
-function getPolicy(args: Args): ToolOutcome {
+function getPolicy(ctx: ToolContext, args: Args): ToolOutcome {
   const { category } = args;
   if (category !== undefined && !CATEGORIES.includes(category as Category)) {
     return invalid([`Category must be one of: ${CATEGORIES.join(", ")}.`]);
   }
   const categories = category === undefined ? CATEGORIES : [category as Category];
+
+  // "Would $120 for meals be allowed?": answered by the same rule that checks real expenses.
+  let check: Record<string, unknown> | undefined;
+  let card: StoredCard | undefined;
+  if (args.amount !== undefined) {
+    if (category === undefined) return invalid(["To check an amount, also give the category."]);
+    const amountCents = toCents(args.amount);
+    const today = utcDay(ctx.now);
+    const verdict = evaluateExpense({ amountCents, category: category as Category, expenseDate: today }, today);
+    const limitCents = POLICY.limitsCents[category as Category];
+    check = {
+      amount: formatCents(amountCents),
+      limit: formatCents(limitCents),
+      verdict: verdict.outcome,
+      notes: verdict.outcome === "needs_review" ? verdict.notes : [],
+    };
+    card = { kind: "policy_check", category: category as Category, amountCents, limitCents, verdict };
+  }
+
   return {
+    card,
     result: {
+      ...(check ? { check } : {}),
       status: "ok",
       currency: POLICY.currency,
       max_expense_age_days: POLICY.maxAgeDays,
@@ -143,6 +175,28 @@ function getPolicy(args: Args): ToolOutcome {
       ],
     },
   };
+}
+
+/**
+ * Words a model reaches for when it does not know the merchant. This catches
+ * the obvious cases; the real rule is in the prompt (ask, never invent).
+ */
+const PLACEHOLDER_MERCHANTS = new Set([
+  "unknown", "n/a", "na", "none", "tbd", "?", "merchant", "vendor", "restaurant", "store", "shop",
+]);
+
+/** What differs between the draft being replaced and the new one, in display form. */
+function describeChanges(before: Expense, after: Expense): FieldChange[] {
+  const changes: FieldChange[] = [];
+  const add = (field: FieldChange["field"], from: string, to: string) => {
+    if (from !== to) changes.push({ field, from, to });
+  };
+  add("amount", formatCents(before.amountCents), formatCents(after.amountCents));
+  add("merchant", before.merchant, after.merchant);
+  add("date", before.expenseDate, after.expenseDate);
+  add("category", before.category, after.category);
+  add("description", before.description ?? "", after.description ?? "");
+  return changes;
 }
 
 async function prepareExpense(ctx: ToolContext, args: Args): Promise<ToolOutcome> {
@@ -165,8 +219,14 @@ async function prepareExpense(ctx: ToolContext, args: Args): Promise<ToolOutcome
     if (!(error instanceof ValidationError)) throw error;
     issues.push(...error.issues);
   }
+  if (typeof args.merchant === "string" && PLACEHOLDER_MERCHANTS.has(args.merchant.trim().toLowerCase())) {
+    issues.push(
+      "The merchant looks like a placeholder, not a real name. Ask the user who was paid; never fill it in yourself.",
+    );
+  }
   if (issues.length > 0) return invalid(issues);
 
+  const previous = await getActiveDraft(ctx.db, ctx.userId);
   const outcome = await createDraft(
     ctx.db,
     ctx.userId,
@@ -183,8 +243,15 @@ async function prepareExpense(ctx: ToolContext, args: Args): Promise<ToolOutcome
   if (outcome.outcome === "blocked") {
     return { result: { status: "blocked_by_policy", draft_saved: false, reasons: outcome.reasons } };
   }
+  const changes = previous ? describeChanges(previous, outcome.expense) : undefined;
   return {
     draftChanged: true,
+    card: {
+      kind: "expense",
+      event: previous ? "updated" : "drafted",
+      expenseId: outcome.expense.id,
+      ...(changes?.length ? { changes } : {}),
+    },
     result: {
       status: "draft_saved",
       submitted: false,
@@ -199,7 +266,11 @@ async function cancelActiveDraft(ctx: ToolContext): Promise<ToolOutcome> {
   if (!draft) return { result: { status: "no_active_draft" } };
   const outcome = await cancelDraft(ctx.db, ctx.userId, draft.id);
   if (outcome.outcome === "cancelled" || outcome.outcome === "already_cancelled") {
-    return { draftChanged: true, result: { status: "draft_cancelled" } };
+    return {
+      draftChanged: true,
+      card: { kind: "expense", event: "cancelled", expenseId: draft.id },
+      result: { status: "draft_cancelled" },
+    };
   }
   // It was submitted (by the user) in the instant between the two statements.
   return { result: { status: "no_active_draft" } };
@@ -220,6 +291,7 @@ async function spendingSummary(ctx: ToolContext, args: Args): Promise<ToolOutcom
   const range = { from: args.from as string | undefined, to: args.to as string | undefined };
   const summary = await getSpendingSummary(ctx.db, ctx.userId, range);
   return {
+    card: { kind: "summary", summary, ...(range.from ? { from: range.from } : {}), ...(range.to ? { to: range.to } : {}) },
     result: {
       status: "ok",
       scope: "submitted expenses only",
@@ -252,7 +324,7 @@ export async function executeTool(ctx: ToolContext, call: ToolCall): Promise<Too
   try {
     switch (name) {
       case "get_policy":
-        return getPolicy(input);
+        return getPolicy(ctx, input);
       case "prepare_expense":
         return await prepareExpense(ctx, input);
       case "cancel_draft":

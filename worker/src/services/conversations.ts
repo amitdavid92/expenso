@@ -13,10 +13,14 @@ export const MAX_MESSAGE_LENGTH = 4000;
 export const DEFAULT_HISTORY_LIMIT = 20;
 export const MAX_HISTORY_LIMIT = 100;
 
+/** Structured data kept with a message (a card, an error code…). This service only stores it. */
+export type MessageMetaJson = Record<string, unknown>;
+
 export interface Message {
   id: number;
   role: Role;
   content: string;
+  meta: MessageMetaJson | null;
   createdAt: string;
 }
 
@@ -24,18 +28,32 @@ interface MessageRow {
   id: number;
   role: Role;
   content: string;
+  meta: string | null;
   created_at: string;
 }
 
+const COLUMNS = "id, role, content, meta, created_at";
+
 function toMessage(row: MessageRow): Message {
-  return { id: row.id, role: row.role, content: row.content, createdAt: row.created_at };
+  return {
+    id: row.id,
+    role: row.role,
+    content: row.content,
+    meta: row.meta ? (JSON.parse(row.meta) as MessageMetaJson) : null,
+    createdAt: row.created_at,
+  };
 }
 
+/**
+ * @param meta optional structured data for channels that can show more than
+ *   text. `content` must always make sense without it.
+ */
 export async function appendMessage(
   db: D1Database,
   userId: number,
   role: Role,
   content: string,
+  meta?: object,
 ): Promise<Message> {
   assertPositiveInt(userId, "User id");
   if (!ROLES.includes(role)) {
@@ -48,14 +66,32 @@ export async function appendMessage(
     throw new ValidationError(`Message cannot be longer than ${MAX_MESSAGE_LENGTH} characters.`);
   }
 
+  const hasMeta = meta !== undefined && Object.keys(meta).length > 0;
   const row = await db
     .prepare(
-      "INSERT INTO messages (user_id, role, content) VALUES (?, ?, ?) RETURNING id, role, content, created_at",
+      `INSERT INTO messages (user_id, role, content, meta) VALUES (?, ?, ?, ?) RETURNING ${COLUMNS}`,
     )
-    .bind(userId, role, content)
+    .bind(userId, role, content, hasMeta ? JSON.stringify(meta) : null)
     .first<MessageRow>();
 
   return toMessage(row!);
+}
+
+/** This user's messages newer than `afterId`, oldest first: what one turn added. */
+export async function listMessagesAfter(
+  db: D1Database,
+  userId: number,
+  afterId: number,
+): Promise<Message[]> {
+  assertPositiveInt(userId, "User id");
+  if (!Number.isSafeInteger(afterId) || afterId < 0) {
+    throw new ValidationError("Message id must be a whole number, zero or more.");
+  }
+  const { results } = await db
+    .prepare(`SELECT ${COLUMNS} FROM messages WHERE user_id = ? AND id > ? ORDER BY id LIMIT ?`)
+    .bind(userId, afterId, MAX_HISTORY_LIMIT)
+    .all<MessageRow>();
+  return results.map(toMessage);
 }
 
 /** The user's latest `limit` messages, oldest first (the order a model or a chat UI needs). */
@@ -72,7 +108,7 @@ export async function listRecentMessages(
 
   const { results } = await db
     .prepare(
-      "SELECT id, role, content, created_at FROM messages WHERE user_id = ? ORDER BY id DESC LIMIT ?",
+      `SELECT ${COLUMNS} FROM messages WHERE user_id = ? ORDER BY id DESC LIMIT ?`,
     )
     .bind(userId, limit)
     .all<MessageRow>();
