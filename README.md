@@ -21,7 +21,7 @@ Everything runs locally and on free tiers. No paid billing is needed.
 
 ## Local setup
 
-Requires Node.js 22 or newer and npm.
+Requires Node.js 22.12 or newer and npm.
 
 ```bash
 npm install
