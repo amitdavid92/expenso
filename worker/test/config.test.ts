@@ -13,8 +13,9 @@ describe("assistantConfigFromEnv", () => {
 
   it.each([undefined, "", "many", "-1", "2.5"])("falls back to a safe default for %j", (value) => {
     const config = assistantConfigFromEnv({ USER_DAILY_LLM_LIMIT: value, APP_DAILY_LLM_LIMIT: value });
-    expect(config.userDailyLimit).toBe(30);
-    expect(config.appDailyLimit).toBe(150);
+    expect(config.userDailyLimit).toBe(60);
+    expect(config.appDailyLimit).toBe(400);
+    expect(config.appPerMinuteLimit).toBe(12);
   });
 
   it("keeps the whole turn inside the 30-second background window, with time to spare", () => {
@@ -25,6 +26,7 @@ describe("assistantConfigFromEnv", () => {
 
   it("has a model and limits configured in wrangler.jsonc", () => {
     expect(env.GEMINI_MODEL).toMatch(/^gemini-/);
+    expect(assistantConfigFromEnv(env)).toMatchObject({ userDailyLimit: 60, appDailyLimit: 400, appPerMinuteLimit: 12 });
     expect(assistantConfigFromEnv(env).userDailyLimit).toBeLessThanOrEqual(assistantConfigFromEnv(env).appDailyLimit);
   });
 });

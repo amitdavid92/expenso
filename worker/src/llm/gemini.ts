@@ -37,7 +37,16 @@ function isObject(value: unknown): value is Record<string, unknown> {
 function toContent(message: LlmMessage): unknown {
   switch (message.role) {
     case "user":
-      return { role: "user", parts: [{ text: message.text }] } satisfies GeminiContent;
+      return {
+        role: "user",
+        // Gemini's guidance: an image goes before the text that refers to it.
+        parts: [
+          ...(message.images ?? []).map((image) => ({
+            inlineData: { mimeType: image.mimeType, data: image.base64 },
+          })),
+          { text: message.text },
+        ],
+      } satisfies GeminiContent;
     case "assistant":
       return { role: "model", parts: [{ text: message.text }] } satisfies GeminiContent;
     case "assistant_raw":
@@ -107,7 +116,16 @@ export function createGeminiClient(options: GeminiOptions): LlmClient {
           body: JSON.stringify({
             systemInstruction: { parts: [{ text: request.system }] },
             contents: request.messages.map(toContent),
-            tools: [{ functionDeclarations: request.tools }],
+            ...(request.tools?.length ? { tools: [{ functionDeclarations: request.tools }] } : {}),
+            ...(request.jsonSchema
+              ? {
+                  generationConfig: {
+                    responseFormat: {
+                      text: { mimeType: "APPLICATION_JSON", schema: request.jsonSchema },
+                    },
+                  },
+                }
+              : {}),
           }),
           signal: request.signal,
         });

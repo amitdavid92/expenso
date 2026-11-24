@@ -24,8 +24,14 @@ export interface ToolResult {
   result: Record<string, unknown>;
 }
 
+/** An image sent along with a user message. */
+export interface LlmImage {
+  mimeType: "image/jpeg" | "image/png";
+  base64: string;
+}
+
 export type LlmMessage =
-  | { role: "user"; text: string }
+  | { role: "user"; text: string; images?: LlmImage[] }
   /** An assistant message from an earlier, finished turn. */
   | { role: "assistant"; text: string }
   /**
@@ -40,7 +46,13 @@ export type LlmMessage =
 export interface LlmRequest {
   system: string;
   messages: LlmMessage[];
-  tools: ToolDeclaration[];
+  /** Tools the model may call. Leave out to offer none. */
+  tools?: ToolDeclaration[];
+  /**
+   * When set, the model must answer with JSON matching this JSON Schema, and
+   * `LlmResponse.text` is that JSON. The values still need validating.
+   */
+  jsonSchema?: Record<string, unknown>;
   /** Aborting it cancels the request; the client reports that as a timeout. */
   signal?: AbortSignal;
 }

@@ -137,6 +137,53 @@ describe("Gemini client: request", () => {
   });
 });
 
+describe("Gemini client: images and structured output", () => {
+  it("sends an image before the text of the same message", async () => {
+    const { calls, fetchImpl } = stubFetch(() => json(modelReply([{ text: "{}" }])));
+
+    await client(fetchImpl).generate({
+      system: "Extract.",
+      messages: [{ role: "user", text: "Extract the receipt.", images: [{ mimeType: "image/png", base64: "aGVsbG8=" }] }],
+    });
+
+    expect(calls[0]!.body.contents).toEqual([
+      {
+        role: "user",
+        parts: [{ inlineData: { mimeType: "image/png", data: "aGVsbG8=" } }, { text: "Extract the receipt." }],
+      },
+    ]);
+  });
+
+  it("asks for JSON matching the schema when one is given", async () => {
+    const { calls, fetchImpl } = stubFetch(() => json(modelReply([{ text: "{}" }])));
+    const jsonSchema = { type: "object", properties: { total: { type: ["number", "null"] } }, required: ["total"] };
+
+    await client(fetchImpl).generate({ system: "Extract.", messages: [{ role: "user", text: "go" }], jsonSchema });
+
+    expect(calls[0]!.body.generationConfig).toEqual({
+      responseFormat: { text: { mimeType: "APPLICATION_JSON", schema: jsonSchema } },
+    });
+  });
+
+  it("offers no tools at all when none are given", async () => {
+    const { calls, fetchImpl } = stubFetch(() => json(modelReply([{ text: "{}" }])));
+
+    await client(fetchImpl).generate({ system: "Extract.", messages: [{ role: "user", text: "go" }] });
+
+    expect(calls[0]!.body).not.toHaveProperty("tools");
+    expect(calls[0]!.body).not.toHaveProperty("generationConfig");
+  });
+
+  it("leaves an ordinary text conversation exactly as before", async () => {
+    const { calls, fetchImpl } = stubFetch(() => json(modelReply([{ text: "hi" }])));
+
+    await client(fetchImpl).generate(request);
+
+    expect(calls[0]!.body.contents).toEqual([{ role: "user", parts: [{ text: "hello" }] }]);
+    expect(calls[0]!.body).not.toHaveProperty("generationConfig");
+  });
+});
+
 describe("Gemini client: response", () => {
   it("returns the text of a plain reply", async () => {
     const { fetchImpl } = stubFetch(() => json(modelReply([{ text: "Hello " }, { text: "there" }])));

@@ -18,10 +18,13 @@
   "vars": {
     // Must be a model with a free tier. See README for how it was chosen.
     "GEMINI_MODEL": "gemini-3.5-flash-lite",
-    // Daily caps on Gemini requests (not messages: one message can take several).
-    // Counted per US Pacific day, which is when Gemini's own quota resets.
-    "USER_DAILY_LLM_LIMIT": "30",
-    "APP_DAILY_LLM_LIMIT": "150"
+    // Caps on Gemini requests (not messages: one message can take several; retries count too).
+    // Verified free-tier quota for this model in AI Studio: 15 requests/minute, 500 requests/day.
+    // Daily counters follow US Pacific days, which is when Gemini's own quota resets.
+    "USER_DAILY_LLM_LIMIT": "60",
+    "APP_DAILY_LLM_LIMIT": "400",
+    // Rolling 60-second window, whole application.
+    "APP_PER_MINUTE_LLM_LIMIT": "12"
   },
 
   "d1_databases": [

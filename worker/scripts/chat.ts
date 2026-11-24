@@ -8,12 +8,22 @@
  *   npm run chat -- --new            a brand-new user
  *   npm run chat < messages.txt      scripted: one message per line
  *
+ * Inside the chat, a line of the form
+ *
+ *   /receipt samples/receipt-cafe-aurora.png  [optional caption]
+ *
+ * sends that image through receipt analysis (`handleReceipt`), the same call the
+ * web and Telegram adapters will make for a photo.
+ *
  * Needs GEMINI_API_KEY in worker/.dev.vars and `npm run db:migrate:local` once.
  */
+import { readFile } from "node:fs/promises";
 import { createInterface } from "node:readline";
 import { getPlatformProxy } from "wrangler";
 import { handleMessage } from "../src/assistant/assistant";
 import { assistantConfigFromEnv } from "../src/assistant/config";
+import { handleReceipt } from "../src/assistant/receipts";
+import type { AssistantReply } from "../src/assistant/types";
 import { createGeminiClient } from "../src/llm/gemini";
 import { findOrCreateUser } from "../src/services/users";
 
@@ -42,7 +52,23 @@ try {
 
   const interactive = process.stdin.isTTY === true;
   console.log(`Expenso local chat · model ${env.GEMINI_MODEL} · user "${userName}"`);
-  if (interactive) console.log('Type a message. "confirm" / "cancel" act on the draft. Ctrl+D to quit.\n');
+  if (interactive) {
+    console.log('Type a message. "confirm" / "cancel" act on the draft. Ctrl+D to quit.');
+    console.log("Send a receipt with: /receipt <path to .png or .jpg> [caption]\n");
+  }
+
+  /** "/receipt <path> [caption]": reads the file and runs receipt analysis on it. */
+  async function sendReceipt(line: string): Promise<AssistantReply | string> {
+    const [, path, ...captionWords] = line.split(/\s+/);
+    if (!path) return "Usage: /receipt <path to .png or .jpg> [caption]";
+    let image: Uint8Array;
+    try {
+      image = new Uint8Array(await readFile(path));
+    } catch {
+      return `Could not read the file "${path}" (paths are relative to the worker folder).`;
+    }
+    return handleReceipt(deps, { userId: user.id, image, caption: captionWords.join(" ") });
+  }
 
   const lines = createInterface({ input: process.stdin, prompt: "you> " });
   if (interactive) lines.prompt();
@@ -51,10 +77,21 @@ try {
     if (text !== "") {
       if (!interactive) console.log(`\nyou> ${text}`);
       const started = Date.now();
-      const result = await handleMessage(deps, { userId: user.id, text });
+      const result = text.startsWith("/receipt")
+        ? await sendReceipt(text)
+        : await handleMessage(deps, { userId: user.id, text });
+      if (typeof result === "string") {
+        console.log(result);
+        if (interactive) lines.prompt();
+        continue;
+      }
       console.log(`expenso> ${result.reply.replaceAll("\n", "\n         ")}`);
       const notes = [`${Date.now() - started} ms`];
       if (result.error) notes.push(`error: ${result.error}`);
+      if (result.receipt) {
+        notes.push(`receipt: ${result.receipt.status}`);
+        if (result.receipt.missing.length > 0) notes.push(`missing: ${result.receipt.missing.join(", ")}`);
+      }
       if (result.pendingExpense) notes.push(`draft #${result.pendingExpense.id} pending`);
       console.log(`         [${notes.join(" · ")}]`);
     }

@@ -1,16 +1,20 @@
-import { type LlmClient, LlmError, type LlmMessage, type LlmResponse } from "../llm/types";
+import type { LlmMessage } from "../llm/types";
 import { MAX_MESSAGE_LENGTH, appendMessage, listRecentMessages } from "../services/conversations";
-import { type Expense, cancelDraft, confirmExpense, getActiveDraft } from "../services/expenses";
-import { consumeQuota } from "../services/limits";
+import { cancelDraft, confirmExpense, getActiveDraft } from "../services/expenses";
 import { describeExpense, draftNotice, submittedNotice } from "./format";
+import { ERROR_TEXT, TurnFailure, createModelCaller } from "./model-caller";
 import { buildSystemPrompt } from "./prompt";
 import { TOOL_DECLARATIONS, executeTool } from "./tools";
+import type { AssistantDeps, AssistantErrorCode, AssistantReply, TurnErrorCode } from "./types";
+
+export type { AssistantConfig, AssistantDeps, AssistantErrorCode, AssistantReply } from "./types";
 
 /**
  * The assistant, independent of any channel. Web and Telegram adapters call
  * the three functions exported here and render what comes back.
  *
  *   handleMessage     a text message from the user
+ *   handleReceipt     a photo of a receipt (see receipts.ts)
  *   confirmDraftById  the user pressed Confirm on a specific draft
  *   cancelDraftById   the user pressed Cancel on a specific draft
  *
@@ -18,67 +22,8 @@ import { TOOL_DECLARATIONS, executeTool } from "./tools";
  * ever done by code in this file, in response to an explicit user action.
  */
 
-export interface AssistantConfig {
-  /** Model requests one user may cause per day. */
-  userDailyLimit: number;
-  /** Model requests the whole application may make per day. */
-  appDailyLimit: number;
-  /** Hard cap on model requests for a single user message (retries included). */
-  maxRounds: number;
-  /** Longest a single model request may take. */
-  requestTimeoutMs: number;
-  /** Longest a whole user message may take, across all model requests. */
-  deadlineMs: number;
-  /**
-   * How long to pause before each retry of a failed request that is worth
-   * retrying (network error, HTTP 5xx). Its length is the number of retries.
-   */
-  retryDelaysMs: number[];
-}
-
-export interface AssistantDeps {
-  db: D1Database;
-  llm: LlmClient;
-  config: AssistantConfig;
-  /** The current time; replaceable in tests. */
-  now?: () => Date;
-}
-
-export type AssistantErrorCode =
-  | "invalid_input"
-  | "user_limit"
-  | "app_limit"
-  | "provider_rate_limited"
-  | "timeout"
-  | "unavailable"
-  | "too_many_steps";
-
-export interface AssistantReply {
-  /** Text to show the user. Always present, also when something failed. */
-  reply: string;
-  /** The user's draft after this turn, read from the database (for Confirm/Cancel buttons). */
-  pendingExpense: Expense | null;
-  /** Set when the turn failed; `reply` then holds a friendly explanation. */
-  error?: AssistantErrorCode;
-}
-
 const MAX_USER_MESSAGE_LENGTH = 2000;
 const HISTORY_LIMIT = 20;
-
-/** Everything that can go wrong once a message has been accepted. */
-type TurnErrorCode = Exclude<AssistantErrorCode, "invalid_input">;
-
-const ERROR_TEXT: Record<TurnErrorCode, string> = {
-  user_limit:
-    'You have reached your daily limit for assistant messages. It resets at midnight Pacific time. You can still type "confirm" or "cancel" for a pending draft.',
-  app_limit:
-    'The assistant has used up its free daily allowance. It resets at midnight Pacific time. You can still type "confirm" or "cancel" for a pending draft.',
-  provider_rate_limited: "The AI service is busy right now. Please wait a minute and try again.",
-  timeout: "That took too long, so I stopped. Please try again.",
-  unavailable: "I couldn't reach the AI service just now. Please try again in a moment.",
-  too_many_steps:
-    "I couldn't finish that in a reasonable number of steps. Please try rephrasing it, or ask for one thing at a time.",
-};
 
 // ── Explicit confirm / cancel ───────────────────────────────────────────────
 
@@ -123,8 +68,8 @@ async function cancelText(deps: AssistantDeps, userId: number, expenseId: number
   }
 }
 
-/** Stores the assistant's words and returns the reply together with the current draft. */
-async function finish(
+/** Stores the assistant's words and returns the reply together with the current draft. Every turn ends here. */
+export async function finish(
   deps: AssistantDeps,
   userId: number,
   reply: string,
@@ -182,34 +127,6 @@ function withoutFalseClaims(text: string, draftChanged: boolean, hasDraft: boole
 
 // ── The model loop ──────────────────────────────────────────────────────────
 
-function errorCodeFor(error: unknown): TurnErrorCode {
-  if (error instanceof LlmError) {
-    if (error.kind === "rate_limited") return "provider_rate_limited";
-    if (error.kind === "timeout") return "timeout";
-  }
-  return "unavailable";
-}
-
-/** Runs one model request and guarantees it ends by the timeout, even if the client hangs. */
-async function generateWithTimeout(
-  deps: AssistantDeps,
-  system: string,
-  messages: LlmMessage[],
-  timeoutMs: number,
-): Promise<LlmResponse> {
-  const signal = AbortSignal.timeout(timeoutMs);
-  const expired = new Promise<never>((_resolve, reject) => {
-    // A request that hung has changed nothing on our side, so it may be retried.
-    signal.addEventListener("abort", () => reject(new LlmError("timeout", { retryable: true })), {
-      once: true,
-    });
-  });
-  return Promise.race([
-    deps.llm.generate({ system, messages, tools: TOOL_DECLARATIONS, signal }),
-    expired,
-  ]);
-}
-
 interface TurnResult {
   text: string;
   error?: TurnErrorCode;
@@ -222,79 +139,32 @@ async function runModelTurn(
   messages: LlmMessage[],
   now: Date,
 ): Promise<TurnResult> {
-  const { config } = deps;
-  const deadlineAt = Date.now() + config.deadlineMs;
   const system = buildSystemPrompt({ now, activeDraft: await getActiveDraft(deps.db, userId) });
+  const callModel = createModelCaller(deps, userId, now);
   let draftChanged = false;
-  let retries = 0;
 
-  const fail = (error: TurnErrorCode): TurnResult => ({
-    text: ERROR_TEXT[error],
-    error,
-    draftChanged,
-  });
-
-  for (let round = 1; round <= config.maxRounds; round++) {
-    const remainingMs = deadlineAt - Date.now();
-    if (remainingMs <= 0) return fail("timeout");
-
-    // Quota is taken before every real request, including tool rounds and retries.
-    const quota = await consumeQuota(deps.db, {
-      userId,
-      userDailyLimit: config.userDailyLimit,
-      appDailyLimit: config.appDailyLimit,
-      now,
-    });
-    if (!quota.allowed) return fail(quota.exhausted === "user" ? "user_limit" : "app_limit");
-
-    let response: LlmResponse;
-    try {
-      response = await generateWithTimeout(
-        deps,
-        system,
-        messages,
-        Math.min(config.requestTimeoutMs, remainingMs),
-      );
-    } catch (error) {
-      // Only the kind and HTTP status are logged: never message text, arguments or credentials.
-      console.warn(
-        error instanceof LlmError
-          ? `llm_request_failed kind=${error.kind} status=${error.status ?? "none"}`
-          : "llm_request_failed kind=unexpected",
-      );
-      const delayMs = config.retryDelaysMs[retries];
-      if (
-        error instanceof LlmError &&
-        error.retryable &&
-        delayMs !== undefined &&
-        Date.now() + delayMs < deadlineAt
-      ) {
-        // Safe to repeat: tools run only after a successful response, so a
-        // failed request has changed nothing. The pause lets a brief provider
-        // spike ("model is experiencing high demand") pass.
-        retries++;
-        await new Promise((resolve) => setTimeout(resolve, delayMs));
-        continue;
+  try {
+    for (;;) {
+      const response = await callModel({ system, messages, tools: TOOL_DECLARATIONS });
+      if (response.toolCalls.length === 0) {
+        return { text: response.text, draftChanged };
       }
-      return fail(errorCodeFor(error));
-    }
 
-    if (response.toolCalls.length === 0) {
-      return { text: response.text, draftChanged };
+      // The model's output goes back verbatim (see LlmMessage "assistant_raw").
+      messages.push({ role: "assistant_raw", raw: response.raw });
+      const results = [];
+      for (const toolCall of response.toolCalls) {
+        const outcome = await executeTool({ db: deps.db, userId, now }, toolCall);
+        draftChanged ||= outcome.draftChanged === true;
+        results.push({ id: toolCall.id, name: toolCall.name, result: outcome.result });
+      }
+      messages.push({ role: "tool_results", results });
     }
-
-    // The model's output goes back verbatim (see LlmMessage "assistant_raw").
-    messages.push({ role: "assistant_raw", raw: response.raw });
-    const results = [];
-    for (const toolCall of response.toolCalls) {
-      const outcome = await executeTool({ db: deps.db, userId, now }, toolCall);
-      draftChanged ||= outcome.draftChanged === true;
-      results.push({ id: toolCall.id, name: toolCall.name, result: outcome.result });
-    }
-    messages.push({ role: "tool_results", results });
+  } catch (error) {
+    if (!(error instanceof TurnFailure)) throw error;
+    // Tools that already ran keep their effect; the reply reports the true state.
+    return { text: ERROR_TEXT[error.code], error: error.code, draftChanged };
   }
-
-  return fail("too_many_steps");
 }
 
 /**

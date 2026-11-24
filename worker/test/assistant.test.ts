@@ -25,6 +25,7 @@ function deps(llm: FakeLlm, config: Partial<AssistantConfig> = {}, now: Date = N
     config: {
       userDailyLimit: 100,
       appDailyLimit: 100_000,
+      appPerMinuteLimit: 100_000,
       maxRounds: 5,
       requestTimeoutMs: 1000,
       deadlineMs: 2000,
@@ -111,7 +112,7 @@ describe("conversation", () => {
 
     await handleMessage(deps(llm), { userId: user.id, text: "hi" });
 
-    const names = llm.requests[0]!.tools.map((t) => t.name);
+    const names = llm.requests[0]!.tools!.map((t) => t.name);
     expect(names).toContain("prepare_expense");
     expect(names.join(" ")).not.toMatch(/confirm|submit/);
   });
@@ -559,6 +560,28 @@ describe("quota", () => {
     expect(llm.requests).toHaveLength(0);
     expect(result.error).toBe("app_limit");
     expect(result.reply).toMatch(/free/i);
+  });
+
+  it("does not call the model when the application is over its per-minute rate, and asks to retry shortly", async () => {
+    const user = await newUser();
+    const llm = new FakeLlm();
+
+    const result = await handleMessage(deps(llm, { appPerMinuteLimit: 0 }), { userId: user.id, text: "hi" });
+
+    expect(llm.requests).toHaveLength(0);
+    expect(result.error).toBe("busy");
+    expect(result.reply).toMatch(/minute/i);
+  });
+
+  it("counts every model request against the per-minute rate, tool rounds included", async () => {
+    const user = await newUser();
+    const now = new Date("2033-05-01T09:00:00Z");
+    const llm = new FakeLlm(call({ name: "get_policy" }), call({ name: "get_policy" }), say("never reached"));
+
+    const result = await handleMessage(deps(llm, { appPerMinuteLimit: 2 }, now), { userId: user.id, text: "hi" });
+
+    expect(llm.requests).toHaveLength(2);
+    expect(result.error).toBe("busy");
   });
 
   it("stops mid-turn when the limit runs out, keeps the draft, and shows its true state", async () => {

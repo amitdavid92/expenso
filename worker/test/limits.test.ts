@@ -138,3 +138,92 @@ describe("consumeQuota", () => {
     ).rejects.toThrow(ValidationError);
   });
 });
+
+describe("consumeQuota: requests per minute", () => {
+  const at = (iso: string) => new Date(iso);
+  const base = { userDailyLimit: 1000, appDailyLimit: 1000, appPerMinuteLimit: 3 };
+
+  it("allows the configured number of requests within a minute, then refuses", async () => {
+    const user = await newUser();
+    const now = at("2032-03-01T12:00:00Z");
+    for (let i = 0; i < 3; i++) {
+      expect((await consumeQuota(db, { ...base, userId: user.id, now })).allowed).toBe(true);
+    }
+
+    expect(await consumeQuota(db, { ...base, userId: user.id, now })).toEqual({
+      allowed: false,
+      exhausted: "minute",
+    });
+  });
+
+  it("applies to the whole application, across users", async () => {
+    const users = await Promise.all([newUser(), newUser(), newUser(), newUser()]);
+    const now = at("2032-03-02T12:00:00Z");
+    const results = [];
+    for (const user of users) results.push(await consumeQuota(db, { ...base, userId: user.id, now }));
+
+    expect(results.map((r) => r.allowed)).toEqual([true, true, true, false]);
+  });
+
+  it("is a rolling window: a slot frees up exactly 60 seconds after the request that used it", async () => {
+    const user = await newUser();
+    const request = (iso: string) => consumeQuota(db, { ...base, userId: user.id, now: at(iso) });
+    await request("2032-03-03T12:00:00.000Z");
+    await request("2032-03-03T12:00:20.000Z");
+    await request("2032-03-03T12:00:40.000Z");
+
+    expect((await request("2032-03-03T12:00:59.999Z")).allowed).toBe(false);
+    expect((await request("2032-03-03T12:01:00.000Z")).allowed).toBe(true); // the 12:00:00 slot is free
+    expect((await request("2032-03-03T12:01:10.000Z")).allowed).toBe(false); // 12:00:20 is still inside
+    expect((await request("2032-03-03T12:01:20.000Z")).allowed).toBe(true);
+  });
+
+  it("does not charge the daily allowances when the minute limit refuses", async () => {
+    const user = await newUser();
+    const now = at("2032-03-04T12:00:00Z");
+    const tight = { ...base, userDailyLimit: 10, userId: user.id };
+    for (let i = 0; i < 5; i++) await consumeQuota(db, { ...tight, now }); // 3 allowed, 2 refused
+
+    const later = await consumeQuota(db, { ...tight, now: at("2032-03-04T12:05:00Z") });
+
+    expect(later).toMatchObject({ allowed: true, userRemaining: 6 });
+  });
+
+  it("does not use up a minute slot when a daily limit refuses", async () => {
+    const blocked = await newUser();
+    const other = await newUser();
+    const now = at("2032-03-05T12:00:00Z");
+    for (let i = 0; i < 5; i++) {
+      await consumeQuota(db, { ...base, userDailyLimit: 0, userId: blocked.id, now });
+      await consumeQuota(db, { ...base, userDailyLimit: 1, userId: blocked.id, now });
+    }
+
+    // "blocked" got 1 through and was refused 9 times; 2 of the 3 slots must still be free.
+    expect((await consumeQuota(db, { ...base, userId: other.id, now })).allowed).toBe(true);
+    expect((await consumeQuota(db, { ...base, userId: other.id, now })).allowed).toBe(true);
+    expect((await consumeQuota(db, { ...base, userId: other.id, now })).allowed).toBe(false);
+  });
+
+  it("never lets concurrent requests exceed the per-minute limit", async () => {
+    const users = await Promise.all(Array.from({ length: 20 }, () => newUser()));
+    const now = at("2032-03-06T12:00:00Z");
+
+    const results = await Promise.all(
+      users.map((u) => consumeQuota(db, { ...base, appPerMinuteLimit: 12, userId: u.id, now })),
+    );
+
+    expect(results.filter((r) => r.allowed)).toHaveLength(12);
+  });
+
+  it("refuses everything when the per-minute limit is zero", async () => {
+    const user = await newUser();
+    expect(
+      await consumeQuota(db, { ...base, appPerMinuteLimit: 0, userId: user.id, now: at("2032-03-07T12:00:00Z") }),
+    ).toEqual({ allowed: false, exhausted: "minute" });
+  });
+
+  it("rejects an invalid per-minute limit", async () => {
+    const user = await newUser();
+    await expect(consumeQuota(db, { ...base, appPerMinuteLimit: -1, userId: user.id })).rejects.toThrow(ValidationError);
+  });
+});
