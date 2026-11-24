@@ -1,0 +1,16 @@
+{
+  "name": "expenso",
+  "private": true,
+  "version": "0.1.0",
+  "description": "Expenso: an AI-powered business expense assistant (web chat + Telegram).",
+  "workspaces": ["worker", "web"],
+  "scripts": {
+    "dev:worker": "npm run dev -w worker",
+    "dev:web": "npm run dev -w web",
+    "build": "npm run build -w web",
+    "preview": "npm run build && npm run dev:worker",
+    "test": "npm run test -w worker",
+    "typecheck": "npm run typecheck --workspaces",
+    "db:migrate:local": "npm run db:migrate:local -w worker"
+  }
+}

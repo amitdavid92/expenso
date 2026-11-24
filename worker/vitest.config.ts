@@ -1,0 +1,23 @@
+import path from "node:path";
+import { cloudflareTest, readD1Migrations } from "@cloudflare/vitest-plugin";
+import { defineConfig } from "vitest/config";
+
+// Tests run inside the local Workers runtime (workerd) with a local, throwaway
+// D1 database. Nothing here talks to a Cloudflare account.
+export default defineConfig(async () => {
+  const migrations = await readD1Migrations(path.join(import.meta.dirname, "migrations"));
+
+  return {
+    plugins: [
+      cloudflareTest({
+        wrangler: { configPath: "./wrangler.jsonc" },
+        miniflare: {
+          bindings: { TEST_MIGRATIONS: migrations },
+        },
+      }),
+    ],
+    test: {
+      setupFiles: ["./test/apply-migrations.ts"],
+    },
+  };
+});

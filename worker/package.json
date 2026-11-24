@@ -1,0 +1,22 @@
+{
+  "name": "@expenso/worker",
+  "private": true,
+  "version": "0.1.0",
+  "type": "module",
+  "scripts": {
+    "dev": "wrangler dev",
+    "types": "wrangler types",
+    "typecheck": "wrangler types && tsc --noEmit",
+    "test": "wrangler types && vitest run",
+    "db:migrate:local": "wrangler d1 migrations apply expenso --local"
+  },
+  "dependencies": {
+    "hono": "^4.13.21"
+  },
+  "devDependencies": {
+    "@cloudflare/vitest-plugin": "^1.9.2",
+    "typescript": "^7.0.2",
+    "vitest": "^4.1.12",
+    "wrangler": "^4.168.0"
+  }
+}
