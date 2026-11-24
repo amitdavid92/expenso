@@ -77,6 +77,16 @@ export async function appendMessage(
   return toMessage(row!);
 }
 
+/** The id of this user's newest message, or 0 if they have none. */
+export async function latestMessageId(db: D1Database, userId: number): Promise<number> {
+  assertPositiveInt(userId, "User id");
+  const row = await db
+    .prepare("SELECT COALESCE(MAX(id), 0) AS id FROM messages WHERE user_id = ?")
+    .bind(userId)
+    .first<{ id: number }>();
+  return row?.id ?? 0;
+}
+
 /** This user's messages newer than `afterId`, oldest first: what one turn added. */
 export async function listMessagesAfter(
   db: D1Database,
