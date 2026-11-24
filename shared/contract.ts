@@ -134,6 +134,8 @@ export interface DeskState {
   month: { from: string; to: string; summary: SpendingSummaryDto };
   /** Most recent submitted expenses, newest first. */
   recent: ExpenseDto[];
+  /** The per-expense limit of every category, so a slip can draw its amount against it. */
+  limits: Record<Category, number>;
 }
 
 export interface Bootstrap {

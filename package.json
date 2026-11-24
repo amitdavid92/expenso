@@ -12,7 +12,7 @@
     "dev:web": "npm run dev -w web",
     "build": "npm run build -w web",
     "preview": "npm run build && npm run dev:worker",
-    "test": "npm run test -w worker",
+    "test": "npm run test --workspaces",
     "typecheck": "npm run typecheck --workspaces",
     "db:migrate:local": "npm run db:migrate:local -w worker",
     "chat": "npm run chat -w worker --"

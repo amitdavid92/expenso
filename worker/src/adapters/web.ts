@@ -153,7 +153,13 @@ async function buildDesk(db: D1Database, userId: number, now: Date): Promise<Des
     getSpendingSummary(db, userId, { from, to: today }),
     listExpenses(db, userId, { limit: RECENT_ON_DESK }),
   ]);
-  return { currentSlip, pendingReceipt, month: { from, to: today, summary }, recent };
+  return {
+    currentSlip,
+    pendingReceipt,
+    month: { from, to: today, summary },
+    recent,
+    limits: { ...POLICY.limitsCents },
+  };
 }
 
 // ── Routes ──────────────────────────────────────────────────────────────────
@@ -176,7 +182,11 @@ export function webRoutes(makeDeps: (env: Env) => AssistantDeps) {
       } catch {
         // falls through to the mismatch below
       }
-      if (originHost !== c.req.header("host")) {
+      // Our own host, as the browser addressed it. Behind the local dev proxy
+      // that is the forwarded host; a page on another site cannot set either
+      // header on a request it makes from a browser.
+      const ours = [c.req.header("host"), c.req.header("x-forwarded-host"), new URL(c.req.url).host];
+      if (!ours.includes(originHost)) {
         return c.json({ error: { code: "bad_origin", message: "Request refused." } }, 403);
       }
     }

@@ -1,35 +1,61 @@
-import { useEffect, useState } from "react";
+import { ErrorState } from "./components/ErrorState";
+import { TabBar, TopBar } from "./components/shell/TopBar";
+import { useHashRoute } from "./state/hooks";
+import { ExpensoProvider, useExpenso } from "./state/store";
+import { AssistantView } from "./views/AssistantView";
+import { ExpensesView } from "./views/ExpensesView";
+import { PolicyView } from "./views/PolicyView";
 
-type Health =
-  | { state: "loading" }
-  | { state: "ok" }
-  | { state: "error"; message: string };
+function Frame() {
+  const { state, actions } = useExpenso();
+  const route = useHashRoute();
 
-/** Phase 0 placeholder: proves the web app can reach the Worker API. */
-export default function App() {
-  const [health, setHealth] = useState<Health>({ state: "loading" });
+  if (state.status === "boot_failed") {
+    return (
+      <div className="grid min-h-dvh place-items-center px-6">
+        <div className="max-w-md">
+          <h1 className="mb-3 text-xl font-medium">Expenso could not start</h1>
+          <ErrorState onRetry={actions.boot}>
+            The server did not answer. It may be waking up, or your connection may be down.
+          </ErrorState>
+        </div>
+      </div>
+    );
+  }
 
-  useEffect(() => {
-    fetch("/api/health")
-      .then(async (res) => {
-        const body = (await res.json()) as { status?: string };
-        if (res.ok && body.status === "ok") setHealth({ state: "ok" });
-        else setHealth({ state: "error", message: `API responded ${res.status}` });
-      })
-      .catch(() => setHealth({ state: "error", message: "API unreachable" }));
-  }, []);
+  const workspace = route === "assistant" || route === "desk";
+  const hasSlip = !!state.desk?.currentSlip || !!state.desk?.pendingReceipt;
 
   return (
-    <main className="flex min-h-screen items-center justify-center bg-slate-50 p-6">
-      <div className="w-full max-w-sm rounded-xl border border-slate-200 bg-white p-6 shadow-sm">
-        <h1 className="text-xl font-semibold text-slate-900">Expenso</h1>
-        <p className="mt-1 text-sm text-slate-500">AI expense assistant</p>
-        <p className="mt-4 text-sm" role="status">
-          {health.state === "loading" && <span className="text-slate-500">Checking API…</span>}
-          {health.state === "ok" && <span className="text-emerald-700">API connected</span>}
-          {health.state === "error" && <span className="text-red-700">{health.message}</span>}
-        </p>
-      </div>
-    </main>
+    // The workspace fills the screen and scrolls inside its panes; the other pages scroll as documents.
+    <div className={`flex flex-col ${workspace ? "h-dvh" : "min-h-dvh"}`}>
+      <TopBar route={route} />
+
+      {state.status === "booting" ? (
+        <div className="flex-1 px-4 py-10 sm:px-8" aria-busy="true" aria-label="Loading your workspace">
+          <div className="mx-auto max-w-2xl space-y-4">
+            <div className="skeleton h-10 w-72" />
+            <div className="skeleton h-5 w-96 max-w-full" />
+            <div className="skeleton h-40" />
+          </div>
+        </div>
+      ) : route === "expenses" ? (
+        <ExpensesView />
+      ) : route === "policy" ? (
+        <PolicyView />
+      ) : (
+        <AssistantView show={route === "desk" ? "desk" : "conversation"} />
+      )}
+
+      <TabBar route={route} hasSlip={hasSlip} />
+    </div>
+  );
+}
+
+export default function App() {
+  return (
+    <ExpensoProvider>
+      <Frame />
+    </ExpensoProvider>
   );
 }

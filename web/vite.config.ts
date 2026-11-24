@@ -8,7 +8,8 @@ export default defineConfig({
     // In development the API runs in `wrangler dev`; in production the Worker
     // serves both the API and these built assets from one origin.
     proxy: {
-      "/api": "http://localhost:8787",
+      // xfwd passes the browser's host along, which the API's origin check needs.
+      "/api": { target: "http://localhost:8787", xfwd: true },
     },
   },
 });

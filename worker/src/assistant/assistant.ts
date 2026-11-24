@@ -84,13 +84,13 @@ async function confirm(deps: AssistantDeps, userId: number, expenseId: number): 
     case "submitted":
       return {
         text: submittedNotice(result.expense),
-        lead: "Submitted.",
+        lead: "",
         card: { kind: "expense", event: "submitted", expenseId },
       };
     case "already_submitted":
       return {
         text: `That expense was already submitted: ${describeExpense(result.expense)}`,
-        lead: "That expense was already submitted.",
+        lead: "That was already submitted. Nothing was sent twice.",
         card: { kind: "expense", event: "submitted", expenseId },
       };
     case "blocked":
@@ -111,7 +111,7 @@ async function cancel(deps: AssistantDeps, userId: number, expenseId: number): P
     case "already_cancelled":
       return {
         text: `Draft discarded: ${describeExpense(result.expense)}`,
-        lead: "Draft discarded.",
+        lead: "",
         card: { kind: "expense", event: "cancelled", expenseId },
       };
     case "already_submitted":

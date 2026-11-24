@@ -11,3 +11,6 @@ dist/
 worker-configuration.d.ts
 *.tsbuildinfo
 .DS_Store
+
+# Design review working files (screenshots)
+.impeccable/
