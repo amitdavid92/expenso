@@ -16,3 +16,18 @@ export function utcDay(instant: Date): string {
 export function daysBetween(from: string, to: string): number {
   return Math.round((Date.parse(`${to}T00:00:00Z`) - Date.parse(`${from}T00:00:00Z`)) / DAY_MS);
 }
+
+const pacificDay = new Intl.DateTimeFormat("en-CA", {
+  timeZone: "America/Los_Angeles",
+  year: "numeric",
+  month: "2-digit",
+  day: "2-digit",
+});
+
+/**
+ * The calendar day in US Pacific time, as YYYY-MM-DD (daylight saving included).
+ * Gemini's daily quota resets at midnight Pacific, so usage is counted per Pacific day.
+ */
+export function quotaDay(instant: Date): string {
+  return pacificDay.format(instant);
+}

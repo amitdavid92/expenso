@@ -42,7 +42,7 @@ CREATE UNIQUE INDEX idx_one_draft_per_user ON expenses (user_id) WHERE status = 
 
 -- Daily counters protecting the free Gemini quota. scope is 'app' or 'user:<id>'.
 CREATE TABLE usage_daily (
-  day TEXT NOT NULL, -- YYYY-MM-DD (UTC)
+  day TEXT NOT NULL, -- YYYY-MM-DD in US Pacific time (when the Gemini quota resets)
   scope TEXT NOT NULL,
   count INTEGER NOT NULL DEFAULT 0,
   PRIMARY KEY (day, scope)

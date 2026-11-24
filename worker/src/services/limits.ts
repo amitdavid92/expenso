@@ -1,4 +1,4 @@
-import { utcDay } from "../lib/dates";
+import { quotaDay } from "../lib/dates";
 import { ValidationError, assertPositiveInt } from "../lib/errors";
 
 /**
@@ -15,7 +15,7 @@ export interface QuotaRequest {
   userId: number;
   userDailyLimit: number;
   appDailyLimit: number;
-  /** Defaults to the current time; counters are per UTC day. */
+  /** Defaults to the current time. Counters are per US Pacific day, like Gemini's quota. */
   now?: Date;
 }
 
@@ -44,7 +44,7 @@ export async function consumeQuota(db: D1Database, request: QuotaRequest): Promi
   if (userDailyLimit === 0) return { allowed: false, exhausted: "user" };
   if (appDailyLimit === 0) return { allowed: false, exhausted: "app" };
 
-  const day = utcDay(request.now ?? new Date());
+  const day = quotaDay(request.now ?? new Date());
   const userScope = `user:${userId}`;
 
   const { results } = await db

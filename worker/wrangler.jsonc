@@ -13,6 +13,17 @@
     "run_worker_first": ["/api/*", "/webhooks/*"]
   },
 
+  // Not secrets. Secrets (API keys, tokens) live in .dev.vars locally and in
+  // `wrangler secret put` in production; see src/env.d.ts.
+  "vars": {
+    // Must be a model with a free tier. See README for how it was chosen.
+    "GEMINI_MODEL": "gemini-3.5-flash-lite",
+    // Daily caps on Gemini requests (not messages: one message can take several).
+    // Counted per US Pacific day, which is when Gemini's own quota resets.
+    "USER_DAILY_LLM_LIMIT": "30",
+    "APP_DAILY_LLM_LIMIT": "150"
+  },
+
   "d1_databases": [
     {
       "binding": "DB",

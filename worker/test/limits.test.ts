@@ -79,13 +79,24 @@ describe("consumeQuota", () => {
     });
   });
 
-  it("starts fresh on the next UTC day", async () => {
+  // Gemini's daily quota resets at midnight Pacific time, so our counters do too.
+  it("starts fresh at midnight Pacific time in winter (08:00 UTC), not at midnight UTC", async () => {
     const user = await newUser();
     const base = { userId: user.id, userDailyLimit: 1, appDailyLimit: 1 };
-    await consumeQuota(db, { ...base, now: new Date("2031-01-07T23:59:59Z") });
+    await consumeQuota(db, { ...base, now: new Date("2031-01-07T20:00:00Z") });
 
-    expect((await consumeQuota(db, { ...base, now: new Date("2031-01-07T23:59:59Z") })).allowed).toBe(false);
-    expect((await consumeQuota(db, { ...base, now: new Date("2031-01-08T00:00:00Z") })).allowed).toBe(true);
+    expect((await consumeQuota(db, { ...base, now: new Date("2031-01-08T00:30:00Z") })).allowed).toBe(false);
+    expect((await consumeQuota(db, { ...base, now: new Date("2031-01-08T07:59:59Z") })).allowed).toBe(false);
+    expect((await consumeQuota(db, { ...base, now: new Date("2031-01-08T08:00:00Z") })).allowed).toBe(true);
+  });
+
+  it("starts fresh at midnight Pacific time in summer (07:00 UTC)", async () => {
+    const user = await newUser();
+    const base = { userId: user.id, userDailyLimit: 1, appDailyLimit: 1 };
+    await consumeQuota(db, { ...base, now: new Date("2031-07-07T20:00:00Z") });
+
+    expect((await consumeQuota(db, { ...base, now: new Date("2031-07-08T06:59:59Z") })).allowed).toBe(false);
+    expect((await consumeQuota(db, { ...base, now: new Date("2031-07-08T07:00:00Z") })).allowed).toBe(true);
   });
 
   it("never lets concurrent requests exceed the per-user limit", async () => {
