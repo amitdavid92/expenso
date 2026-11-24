@@ -205,6 +205,8 @@ export type ConfirmResult =
   | { outcome: "submitted"; expense: Expense }
   /** A repeat of an earlier confirmation; nothing changed. */
   | { outcome: "already_submitted"; expense: Expense }
+  /** Policy no longer allows this draft (it aged past the limit). It stays a draft. */
+  | { outcome: "blocked"; reasons: string[] }
   /** The draft was cancelled or replaced by a newer one. */
   | { outcome: "not_active" }
   /** No such expense for this user (also the answer for someone else's expense). */
@@ -224,13 +226,27 @@ function findOwned(db: D1Database, userId: number, expenseId: number) {
     .first<ExpenseRow>();
 }
 
+/** What to tell the caller about an expense that is not (or no longer) a draft. */
+function describeNonDraft(row: ExpenseRow | null): ConfirmResult {
+  if (!row) return { outcome: "not_found" };
+  if (row.status === "submitted") return { outcome: "already_submitted", expense: toExpense(row) };
+  return { outcome: "not_active" };
+}
+
 /**
  * Submits one specific draft.
  *
- * The UPDATE only matches a row with this id, owned by this user, that is still
- * a draft. Those three checks and the state change happen in one statement, so
- * of any number of simultaneous confirmations exactly one sees "submitted".
- * Everything else is answered by reading the row afterwards.
+ * 1. Read the row (scoped to this user). Anything that is not a draft is
+ *    answered straight away, which is what makes a repeated confirm harmless.
+ * 2. Apply policy again as of today. A draft can wait for days, and a date
+ *    that was acceptable when it was drafted may now be too old.
+ * 3. Flip the status with an UPDATE that only matches this id, this user and
+ *    status 'draft'. Of any number of simultaneous confirmations exactly one
+ *    gets the row back; the rest are answered by reading it again.
+ *
+ * Steps 1-2 and step 3 are separate statements. That is safe because a draft's
+ * amount, category and date never change (an edit creates a new row); only its
+ * status can, and step 3 checks the status itself.
  */
 export async function confirmExpense(
   db: D1Database,
@@ -241,22 +257,36 @@ export async function confirmExpense(
   assertPositiveInt(userId, "User id");
   assertPositiveInt(expenseId, "Expense id");
 
+  const existing = await findOwned(db, userId, expenseId);
+  if (!existing || existing.status !== "draft") return describeNonDraft(existing);
+
+  const verdict = evaluateExpense(
+    {
+      amountCents: existing.amount_cents,
+      category: existing.category,
+      expenseDate: existing.expense_date,
+    },
+    utcDay(now),
+  );
+  if (verdict.outcome === "blocked") {
+    return { outcome: "blocked", reasons: verdict.reasons };
+  }
+  const policyNotes = verdict.outcome === "needs_review" ? verdict.notes.join(" ") : null;
+
+  // The verdict stored is the one that held at the moment of submission.
   const updated = await db
     .prepare(
-      `UPDATE expenses SET status = 'submitted', submitted_at = ?
+      `UPDATE expenses
+       SET status = 'submitted', submitted_at = ?, policy_result = ?, policy_notes = ?
        WHERE id = ? AND user_id = ? AND status = 'draft'
        RETURNING ${COLUMNS}`,
     )
-    .bind(now.toISOString(), expenseId, userId)
+    .bind(now.toISOString(), verdict.outcome, policyNotes, expenseId, userId)
     .first<ExpenseRow>();
   if (updated) return { outcome: "submitted", expense: toExpense(updated) };
 
-  const existing = await findOwned(db, userId, expenseId);
-  if (!existing) return { outcome: "not_found" };
-  if (existing.status === "submitted") {
-    return { outcome: "already_submitted", expense: toExpense(existing) };
-  }
-  return { outcome: "not_active" };
+  // Lost a race with another confirm, a cancel or a replacement.
+  return describeNonDraft(await findOwned(db, userId, expenseId));
 }
 
 /** Discards one specific draft. Same atomic pattern as `confirmExpense`. */

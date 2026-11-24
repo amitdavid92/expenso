@@ -77,6 +77,8 @@ web/                 React app
   category limit is submitted and marked `needs_review`.
 - A user has at most one draft. This is enforced by a unique index in the database.
 - Confirm and cancel are atomic and safe to repeat; an outdated draft id is refused.
+- Policy is checked when a draft is created and again when it is confirmed, so a draft
+  that became too old while waiting cannot be submitted.
 - Every query is scoped to one user. Web and Telegram users are never linked.
 - Daily usage limits, per user and for the whole application, protect the free Gemini quota.
 
@@ -85,7 +87,6 @@ web/                 React app
 - Dates are evaluated in UTC. Shortly after midnight in a timezone ahead of UTC,
   "today" can still be yesterday in UTC, so an expense dated today may be reported as
   being in the future.
-- Policy is checked when a draft is created, not again at confirmation.
 - `wrangler` 4 and `@cloudflare/vitest-plugin` currently ship a beta build of Miniflare
   (the local Workers simulator, `5.x-beta`). It is a development-only dependency and has
   been stable here. If it causes trouble, the fallback is to pin `wrangler` to the last

@@ -285,6 +285,76 @@ describe("confirmExpense", () => {
     await expect(confirmExpense(db, user.id, id as never, NOW)).rejects.toThrow(ValidationError);
   });
 
+  describe("policy is checked again at confirmation", () => {
+    // Drafted on 2026-11-24 with a date exactly 90 days old: allowed that day.
+    const agedDraft = { expenseDate: "2026-08-26" };
+
+    it("submits a draft that is still within the age limit on the day it is confirmed", async () => {
+      const user = await newUser();
+      const expense = await draft(user.id, agedDraft);
+
+      const result = await confirmExpense(db, user.id, expense.id, new Date("2026-11-24T23:59:59Z"));
+
+      expect(result.outcome).toBe("submitted");
+    });
+
+    it("refuses a draft that became too old while it waited, and does not submit it", async () => {
+      const user = await newUser();
+      const expense = await draft(user.id, agedDraft);
+
+      const result = await confirmExpense(db, user.id, expense.id, new Date("2026-11-25T00:00:00Z"));
+
+      expect(result).toEqual({
+        outcome: "blocked",
+        reasons: ["The expense is more than 90 days old and can no longer be submitted."],
+      });
+      expect(await countRows(user.id, "submitted")).toBe(0);
+    });
+
+    it("leaves a blocked draft in place so it can still be cancelled or replaced", async () => {
+      const user = await newUser();
+      const expense = await draft(user.id, agedDraft);
+      const later = new Date("2026-12-01T00:00:00Z");
+      await confirmExpense(db, user.id, expense.id, later);
+
+      expect((await getActiveDraft(db, user.id))?.id).toBe(expense.id);
+      expect((await cancelDraft(db, user.id, expense.id)).outcome).toBe("cancelled");
+    });
+
+    it("blocks every attempt when a too-old draft is confirmed concurrently", async () => {
+      const user = await newUser();
+      const expense = await draft(user.id, agedDraft);
+      const later = new Date("2026-12-01T00:00:00Z");
+
+      const results = await Promise.all(
+        Array.from({ length: 5 }, () => confirmExpense(db, user.id, expense.id, later)),
+      );
+
+      expect(results.every((r) => r.outcome === "blocked")).toBe(true);
+      expect(await countRows(user.id, "submitted")).toBe(0);
+    });
+
+    it("still reports an already submitted expense as submitted after it has aged past the limit", async () => {
+      const user = await newUser();
+      const expense = await draft(user.id, agedDraft);
+      await confirmExpense(db, user.id, expense.id, NOW);
+
+      const again = await confirmExpense(db, user.id, expense.id, new Date("2027-06-01T00:00:00Z"));
+
+      expect(again.outcome).toBe("already_submitted");
+    });
+
+    it("does not reveal policy details about another user's aged draft", async () => {
+      const alice = await newUser();
+      const mallory = await newUser();
+      const expense = await draft(alice.id, agedDraft);
+
+      const result = await confirmExpense(db, mallory.id, expense.id, new Date("2026-12-01T00:00:00Z"));
+
+      expect(result).toEqual({ outcome: "not_found" });
+    });
+  });
+
   it("never both submits the old draft and loses the new one when confirm races a replacement", async () => {
     const user = await newUser();
     const old = await draft(user.id);
