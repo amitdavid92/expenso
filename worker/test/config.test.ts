@@ -22,6 +22,8 @@ describe("assistantConfigFromEnv", () => {
     const config = assistantConfigFromEnv({});
     expect(config.deadlineMs).toBeLessThanOrEqual(25_000);
     expect(config.requestTimeoutMs).toBeLessThan(config.deadlineMs);
+    expect(config.receiptRequestTimeoutMs).toBeGreaterThan(config.requestTimeoutMs);
+    expect(config.receiptRequestTimeoutMs).toBeLessThan(config.deadlineMs);
   });
 
   it("has a model and limits configured in wrangler.jsonc", () => {

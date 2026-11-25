@@ -14,6 +14,8 @@ const DEFAULTS: AssistantConfig = {
   maxRounds: 5,
   // Normal answers take 0.5-4 s. Short enough that a hung request can be retried within the deadline.
   requestTimeoutMs: 8_000,
+  // Measured on the free tier: 3-7 s for a clear receipt, more under load.
+  receiptRequestTimeoutMs: 18_000,
   // Leaves room inside Cloudflare's 30-second waitUntil window to send a failure message.
   deadlineMs: 22_000,
   // Gemini's free tier often answers 503 "high demand" for a moment; two spaced retries ride most of that out.

@@ -135,7 +135,8 @@ The model decides what the user means; code decides what is allowed and what hap
 - **Truthful status.** Whenever a draft is saved or submitted, what the user is shown is
   written by code from the database. If the model's text claims a submission, it is replaced.
 - **Bounded work.** One user message can cause at most five model requests, each limited
-  to 8 seconds, all within 22 seconds. Requests worth retrying (network errors, HTTP 5xx,
+  to 8 seconds (18 seconds for reading a receipt photo, which is one slower request), all
+  within 22 seconds. Requests worth retrying (network errors, HTTP 5xx,
   hangs) are retried up to twice after a short pause. Tools only run after a successful
   response, so a retry never repeats a change.
 - **Model metadata.** While a turn is in progress, the model's output is sent back to it

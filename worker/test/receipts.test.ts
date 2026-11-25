@@ -38,6 +38,7 @@ function deps(llm: FakeLlm, config: Partial<AssistantConfig> = {}, now: Date = N
       appPerMinuteLimit: 100_000,
       maxRounds: 5,
       requestTimeoutMs: 1000,
+      receiptRequestTimeoutMs: 1000,
       deadlineMs: 2000,
       retryDelaysMs: [0, 0],
       ...config,
@@ -582,11 +583,28 @@ describe("provider failures", () => {
     expect(await quotaUsed(user.id)).toBe(2);
   });
 
+  it("gives a receipt read longer than a chat reply before giving up", async () => {
+    const user = await newUser();
+    // Reading an image is slower than answering text: 80 ms here stands for several seconds.
+    const slow = async () => {
+      await new Promise((resolve) => setTimeout(resolve, 80));
+      return extracted();
+    };
+
+    const result = await handleReceipt(
+      deps(new FakeLlm(slow), { requestTimeoutMs: 30, receiptRequestTimeoutMs: 1000 }),
+      { userId: user.id, image: PNG },
+    );
+
+    expect(result.error).toBeUndefined();
+    expect(result.receipt?.status).toBe("draft_created");
+  });
+
   it("cuts off an extraction that hangs", async () => {
     const user = await newUser();
     const hang = () => new Promise<never>(() => {});
 
-    const result = await handleReceipt(deps(new FakeLlm(hang, hang, hang), { requestTimeoutMs: 30 }), { userId: user.id, image: PNG });
+    const result = await handleReceipt(deps(new FakeLlm(hang, hang, hang), { receiptRequestTimeoutMs: 30 }), { userId: user.id, image: PNG });
 
     expect(result.error).toBe("timeout");
   });

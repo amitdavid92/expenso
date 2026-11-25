@@ -28,6 +28,7 @@ function deps(llm: FakeLlm, config: Partial<AssistantConfig> = {}, now: Date = N
       appPerMinuteLimit: 100_000,
       maxRounds: 5,
       requestTimeoutMs: 1000,
+      receiptRequestTimeoutMs: 1000,
       deadlineMs: 2000,
       retryDelaysMs: [0, 0],
       ...config,

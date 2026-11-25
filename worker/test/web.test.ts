@@ -22,6 +22,7 @@ const app = createApp({
       appPerMinuteLimit: 100_000,
       maxRounds: 5,
       requestTimeoutMs: 1000,
+      receiptRequestTimeoutMs: 1000,
       deadlineMs: 2000,
       retryDelaysMs: [0, 0],
     },
@@ -198,7 +199,7 @@ describe("chat", () => {
         db: e.DB,
         llm: new FakeLlm(),
         now: () => NOW,
-        config: { userDailyLimit: 0, appDailyLimit: 10, appPerMinuteLimit: 10, maxRounds: 5, requestTimeoutMs: 1000, deadlineMs: 2000, retryDelaysMs: [] },
+        config: { userDailyLimit: 0, appDailyLimit: 10, appPerMinuteLimit: 10, maxRounds: 5, requestTimeoutMs: 1000, receiptRequestTimeoutMs: 1000, deadlineMs: 2000, retryDelaysMs: [] },
       }),
     });
     const session = await limited.request("/api/session", { method: "POST" }, env);

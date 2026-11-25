@@ -65,8 +65,14 @@ export type ModelCaller = (request: Omit<LlmRequest, "signal">) => Promise<LlmRe
  * the retry budget belong to the turn and are shared by every request made
  * through it. A request either returns a response or throws `TurnFailure`.
  */
-export function createModelCaller(deps: AssistantDeps, userId: number, now: Date): ModelCaller {
+export function createModelCaller(
+  deps: AssistantDeps,
+  userId: number,
+  now: Date,
+  options: { requestTimeoutMs?: number } = {},
+): ModelCaller {
   const { config } = deps;
+  const requestTimeoutMs = options.requestTimeoutMs ?? config.requestTimeoutMs;
   const deadlineAt = Date.now() + config.deadlineMs;
   let requestsMade = 0;
   let retries = 0;
@@ -90,7 +96,7 @@ export function createModelCaller(deps: AssistantDeps, userId: number, now: Date
 
       requestsMade++;
       try {
-        return await generateWithTimeout(deps, request, Math.min(config.requestTimeoutMs, remainingMs));
+        return await generateWithTimeout(deps, request, Math.min(requestTimeoutMs, remainingMs));
       } catch (error) {
         // Only the kind and HTTP status are logged: never message text, images,
         // arguments or credentials.

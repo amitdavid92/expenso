@@ -317,7 +317,9 @@ export async function handleReceipt(
   const now = (deps.now ?? (() => new Date()))();
   let answer: string;
   try {
-    const callModel = createModelCaller(deps, userId, now);
+    const callModel = createModelCaller(deps, userId, now, {
+      requestTimeoutMs: deps.config.receiptRequestTimeoutMs,
+    });
     const response = await callModel({
       system: extractionPrompt(now),
       // Only the image and the caption: no history, no tools.

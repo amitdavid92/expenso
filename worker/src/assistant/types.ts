@@ -19,6 +19,12 @@ export interface AssistantConfig {
   maxRounds: number;
   /** Longest a single model request may take. */
   requestTimeoutMs: number;
+  /**
+   * The same, for reading a receipt photo. An image takes the model several
+   * seconds longer than a line of text, and there is only one request per
+   * receipt, so it is allowed most of the turn's deadline.
+   */
+  receiptRequestTimeoutMs: number;
   /** Longest a whole user message may take, across all model requests. */
   deadlineMs: number;
   /**
