@@ -112,6 +112,39 @@ export function DropZone({
   );
 }
 
+/** A button that opens the camera or photo library and hands back the chosen image. */
+export function ScanButton({
+  children,
+  onFile,
+  disabled,
+}: {
+  children: string;
+  onFile: (file: File) => void;
+  disabled: boolean;
+}) {
+  const input = useRef<HTMLInputElement>(null);
+  return (
+    <>
+      <SlipButton primary onClick={() => input.current?.click()} disabled={disabled}>
+        {children}
+      </SlipButton>
+      <input
+        ref={input}
+        type="file"
+        accept="image/*"
+        className="sr-only"
+        tabIndex={-1}
+        aria-hidden="true"
+        onChange={(event) => {
+          const file = firstImage(event.target.files);
+          if (file) onFile(file);
+          event.target.value = "";
+        }}
+      />
+    </>
+  );
+}
+
 /**
  * The slip while its receipt is being read. One true statement about what is
  * happening, how long it has taken, and placeholders where the values will be.

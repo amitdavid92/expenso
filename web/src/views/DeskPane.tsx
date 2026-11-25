@@ -1,5 +1,5 @@
 import { Ledger } from "../components/ledger/Ledger";
-import { DropZone, SlipReading } from "../components/slip/DropZone";
+import { DropZone, ScanButton, SlipReading } from "../components/slip/DropZone";
 import { ExpenseDraftCard } from "../components/slip/ExpenseDraftCard";
 import { ExpenseSubmissionConfirmation } from "../components/slip/ExpenseSubmissionConfirmation";
 import { ReceiptAnalysisCard } from "../components/slip/ReceiptAnalysisCard";
@@ -55,9 +55,12 @@ export function DeskPane() {
           limitCents={desk.limits[state.filed.category]}
           photo={state.slipPreview ?? undefined}
         />
-        <p className="mt-4 text-sm text-ink-2">
-          Ready for the next one: drop a receipt anywhere on this page, or describe an expense.
-        </p>
+        <div className="mt-4 flex">
+          <ScanButton onFile={(file) => actions.sendReceipt(file)} disabled={busy}>
+            Scan another receipt
+          </ScanButton>
+        </div>
+        <p className="mt-2.5 text-sm text-ink-2">Or describe the next expense in the conversation.</p>
       </>
     );
   } else {

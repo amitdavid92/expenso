@@ -1,7 +1,7 @@
 import { describe, expect, it } from "vitest";
 import type { Bootstrap, ChatMessageDto, DeskState, ExpenseDto, TurnResult } from "../../shared/contract";
 import { changedFields } from "../src/lib/diff";
-import { day, describeChange, money, month, receiptAmount } from "../src/lib/format";
+import { day, describeChange, describePendingReceipt, money, month, receiptAmount } from "../src/lib/format";
 import { type State, initialState, reducer } from "../src/state/reducer";
 
 const expense = (overrides: Partial<ExpenseDto> = {}): ExpenseDto => ({
@@ -202,6 +202,20 @@ describe("formatting", () => {
     expect(describeChange({ field: "amount", from: "$42.00", to: "$48.50" })).toBe("Amount changed $42.00 → $48.50");
     expect(describeChange({ field: "date", from: "2026-11-23", to: "2026-11-22" })).toBe("Date changed 23 Nov 2026 → 22 Nov 2026");
     expect(describeChange({ field: "description", from: "", to: "Client lunch" })).toBe("Note added: Client lunch");
+  });
+
+  it("describes a waiting receipt by its real state, not always as 'needs details'", () => {
+    const fields = { merchant: "Old Inn", amountCents: 4850, currency: "USD", expenseDate: "2025-01-01", category: "meals" as const, description: null };
+    const base = { fields, missing: [], reasons: [] };
+
+    expect(describePendingReceipt({ ...base, status: "blocked_by_policy", reasons: ["The expense date is in the future."] })).toEqual({
+      title: "Receipt can't be submitted",
+      detail: "The expense date is in the future.",
+      blocked: true,
+    });
+    expect(describePendingReceipt({ ...base, status: "unsupported_currency", fields: { ...fields, currency: "EUR" } }).title).toBe("Receipt is in EUR");
+    expect(describePendingReceipt({ ...base, status: "needs_details", missing: ["currency"], suggestedCurrency: "USD" }).detail).toBe("Is the total in USD?");
+    expect(describePendingReceipt({ ...base, status: "needs_details", missing: ["date", "merchant"] }).detail).toBe("Still needed: date, merchant");
   });
 
   it("writes a dollar sign only for a confirmed USD amount", () => {

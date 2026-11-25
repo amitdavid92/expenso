@@ -39,7 +39,16 @@ export function WorkingIndicator({ turn }: { turn: Exclude<Turn, { kind: "idle" 
  * still on its way, then what is happening now. New content is announced to
  * screen readers and scrolled into view.
  */
-export function Conversation({ state, onRetry }: { state: State; onRetry: () => void }) {
+export function Conversation({
+  state,
+  onRetry,
+  layoutKey,
+}: {
+  state: State;
+  onRetry: () => void;
+  /** Changes when something outside the conversation (the slip bar, a notice) takes or frees room below it. */
+  layoutKey?: string;
+}) {
   const end = useRef<HTMLDivElement>(null);
   const { messages, outgoing, turn, failed } = state;
   const busy = turn.kind !== "idle";
@@ -50,8 +59,22 @@ export function Conversation({ state, onRetry }: { state: State; onRetry: () => 
     end.current?.scrollIntoView({ block: "end", behavior: "smooth" });
   }, [count, outgoing, turn.kind, failed]);
 
+  // On a phone the slip bar appears above the composer after a turn and the
+  // keyboard opens and closes: both shrink this pane after the scroll above
+  // has run, hiding the newest message. Keep the end in view when that happens.
+  useEffect(() => {
+    void layoutKey;
+    const pane = end.current?.closest("[data-scroll-pane]");
+    if (!pane) return;
+    const keepEndVisible = () => end.current?.scrollIntoView({ block: "end" });
+    keepEndVisible();
+    const observer = new ResizeObserver(keepEndVisible);
+    observer.observe(pane);
+    return () => observer.disconnect();
+  }, [layoutKey]);
+
   return (
-    <div role="log" aria-live="polite" aria-label="Conversation" className="mx-auto w-full max-w-2xl space-y-6 py-7">
+    <div role="log" aria-live="polite" aria-label="Conversation" className="mx-auto w-full max-w-2xl space-y-6 pt-7 pb-5">
       {messages.map((message, i) => (
         <Message
           key={message.id}

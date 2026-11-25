@@ -1,4 +1,4 @@
-import type { Category, FieldChange, ReceiptFieldsDto } from "../../../shared/contract";
+import type { Category, FieldChange, ReceiptAnalysisDto, ReceiptFieldsDto } from "../../../shared/contract";
 
 const usd = new Intl.NumberFormat("en-US", { style: "currency", currency: "USD" });
 
@@ -73,6 +73,31 @@ export function receiptAmount(fields: ReceiptFieldsDto): string | null {
   if (fields.currency === "USD") return money(fields.amountCents);
   const plain = (fields.amountCents / 100).toFixed(2);
   return fields.currency ? `${plain} ${fields.currency}` : plain;
+}
+
+/**
+ * A waiting receipt in two short lines: what state it is in, and what would
+ * move it on. A receipt blocked by policy is not "missing details".
+ */
+export function describePendingReceipt(analysis: ReceiptAnalysisDto): { title: string; detail: string; blocked: boolean } {
+  if (analysis.status === "blocked_by_policy") {
+    return { title: "Receipt can't be submitted", detail: analysis.reasons.join(" ") || "Policy does not allow it.", blocked: true };
+  }
+  if (analysis.status === "unsupported_currency") {
+    return {
+      title: `Receipt is in ${analysis.fields.currency ?? "another currency"}`,
+      detail: "Only USD is supported. Give the amount in USD.",
+      blocked: false,
+    };
+  }
+  if (analysis.missing.length === 1 && analysis.missing[0] === "currency" && analysis.suggestedCurrency) {
+    return { title: "Receipt needs one answer", detail: `Is the total in ${analysis.suggestedCurrency}?`, blocked: false };
+  }
+  return {
+    title: "Receipt needs details",
+    detail: analysis.missing.length > 0 ? `Still needed: ${analysis.missing.join(", ")}` : "Open it to continue.",
+    blocked: false,
+  };
 }
 
 export function elapsedLabel(seconds: number): string {

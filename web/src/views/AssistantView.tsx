@@ -4,7 +4,7 @@ import { MessageComposer } from "../components/conversation/MessageComposer";
 import { Welcome } from "../components/conversation/Welcome";
 import { ErrorState } from "../components/ErrorState";
 import { firstImage } from "../components/slip/DropZone";
-import { money } from "../lib/format";
+import { describePendingReceipt, money } from "../lib/format";
 import { useIsWide } from "../state/hooks";
 import { isBusy, useExpenso } from "../state/store";
 import { DeskPane } from "./DeskPane";
@@ -19,6 +19,7 @@ function SlipBar() {
   const pending = state.desk?.pendingReceipt;
   if (!slip && !pending) return null;
   const busy = isBusy(state);
+  const waiting = pending ? describePendingReceipt(pending) : null;
 
   return (
     <div className="mb-2 flex items-center gap-3 rounded-xl border border-dashed border-line-strong bg-paper px-3.5 py-2 desk:hidden">
@@ -34,7 +35,7 @@ function SlipBar() {
               )}
             </>
           ) : (
-            "Receipt needs details"
+            <span className={waiting!.blocked ? "text-stop" : undefined}>{waiting!.title}</span>
           )}
         </span>
         <span className="block truncate text-sm text-ink">
@@ -43,7 +44,7 @@ function SlipBar() {
               <span className="figure font-medium">{money(slip.amountCents)}</span> · {slip.merchant}
             </>
           ) : (
-            `Still needed: ${pending!.missing.join(", ") || "your answer"}`
+            waiting!.detail
           )}
         </span>
       </a>
@@ -106,11 +107,15 @@ export function AssistantView({ show }: { show: "conversation" | "desk" }) {
       <main
         className={`min-h-0 min-w-0 flex-col ${show === "conversation" ? "flex" : "hidden desk:flex"} ${dragging ? "bg-indigo-wash/60" : "bg-paper"}`}
       >
-        <div className="min-h-0 flex-1 overflow-y-auto px-4 sm:px-8">
+        <div data-scroll-pane className="min-h-0 flex-1 overflow-y-auto px-4 sm:px-8">
           {isNew ? (
             <Welcome onPrompt={actions.send} onFile={(file) => actions.sendReceipt(file)} onSample={actions.sendSampleReceipt} disabled={busy} />
           ) : (
-            <Conversation state={state} onRetry={actions.retry} />
+            <Conversation
+              state={state}
+              onRetry={actions.retry}
+              layoutKey={`${state.desk?.currentSlip?.id ?? ""}|${state.desk?.pendingReceipt?.status ?? ""}|${state.notice ?? ""}`}
+            />
           )}
         </div>
 
