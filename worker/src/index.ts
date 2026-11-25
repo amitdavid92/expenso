@@ -1,4 +1,5 @@
 import { Hono } from "hono";
+import type { ChannelOptions } from "./adapters/channels";
 import { type TelegramOptions, telegramRoutes } from "./adapters/telegram";
 import { createTelegramApi } from "./adapters/telegram-api";
 import { webRoutes } from "./adapters/web";
@@ -6,6 +7,7 @@ import { assistantConfigFromEnv } from "./assistant/config";
 import type { AssistantDeps } from "./assistant/types";
 import { ValidationError } from "./lib/errors";
 import { createGeminiClient } from "./llm/gemini";
+import { validWebUrl } from "./services/handoff";
 
 /** The real assistant dependencies: Gemini and the limits from configuration. */
 function productionDeps(env: Env): AssistantDeps {
@@ -22,13 +24,25 @@ const productionTelegram: TelegramOptions = {
   secret: (env) => env.TELEGRAM_WEBHOOK_SECRET,
 };
 
+/** How the channels reach each other in production. */
+const productionChannels: ChannelOptions = {
+  // The code key falls back to the webhook secret, which every deployment already has.
+  linkKey: (env) => env.LINK_CODE_KEY || env.TELEGRAM_WEBHOOK_SECRET || undefined,
+  webUrl: (env) => {
+    const url = validWebUrl(env.PUBLIC_WEB_URL);
+    if (env.PUBLIC_WEB_URL && !url) console.warn("config_invalid name=PUBLIC_WEB_URL; handoff links disabled");
+    return url;
+  },
+  telegramApi: (env) => (env.TELEGRAM_BOT_TOKEN ? createTelegramApi({ token: env.TELEGRAM_BOT_TOKEN }) : null),
+};
+
 /**
  * Builds the Worker's HTTP app. `makeDeps` and `telegram` exist so tests can
  * run the real routes against a scripted model and a recorded Telegram instead
  * of the real services.
  */
 export function createApp(
-  options: { makeDeps?: (env: Env) => AssistantDeps; telegram?: TelegramOptions } = {},
+  options: { makeDeps?: (env: Env) => AssistantDeps; telegram?: TelegramOptions; channels?: ChannelOptions } = {},
 ) {
   const app = new Hono<{ Bindings: Env }>();
 
@@ -44,8 +58,9 @@ export function createApp(
 
   // Two channels, one assistant: both adapters are given the same dependencies.
   const makeDeps = options.makeDeps ?? productionDeps;
-  app.route("/api", webRoutes(makeDeps));
-  app.route("/webhooks/telegram", telegramRoutes(makeDeps, options.telegram ?? productionTelegram));
+  const channels = options.channels ?? productionChannels;
+  app.route("/api", webRoutes(makeDeps, channels));
+  app.route("/webhooks/telegram", telegramRoutes(makeDeps, options.telegram ?? productionTelegram, channels));
 
   app.notFound((c) => c.json({ error: { code: "not_found", message: "Route not found" } }, 404));
 

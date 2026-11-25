@@ -120,6 +120,8 @@ export interface ChatMessageDto {
   createdAt: string;
   /** The user sent a receipt photo. The image itself is never stored. */
   attachment?: "receipt_photo";
+  /** A user message sent from Telegram, in a conversation shared with the web. */
+  via?: "telegram";
   card?: Card;
   error?: { code: ErrorCode; retryable: boolean };
 }
@@ -138,9 +140,31 @@ export interface DeskState {
   limits: Record<Category, number>;
 }
 
+/** Who this browser is. A guest has its own workspace; a connected browser opens a Telegram account. */
+export type AccountDto =
+  | { kind: "guest" }
+  | {
+      kind: "telegram";
+      /** The Telegram first name, if Telegram gave one. */
+      name: string | null;
+      /** Disconnecting brings back the guest workspace this browser had before connecting. */
+      returnsToGuest: boolean;
+    };
+
 export interface Bootstrap {
   messages: ChatMessageDto[];
   desk: DeskState;
+  account: AccountDto;
+}
+
+/** What a handoff link or code would do, shown before anything changes. */
+export interface LinkPreviewDto {
+  /** The Telegram account the link opens. */
+  name: string | null;
+  /** The browser already has this account open; continuing changes nothing. */
+  sameAccount: boolean;
+  /** What this browser's guest workspace holds; it stays as it is and is not merged. */
+  guest: { submitted: number; hasDraft: boolean; messages: number } | null;
 }
 
 export interface TurnResult {

@@ -1,53 +1,70 @@
-import { Hono } from "hono";
-import { getCookie, setCookie } from "hono/cookie";
+import { type Context, Hono } from "hono";
+import { deleteCookie, getCookie, setCookie } from "hono/cookie";
 import { secureHeaders } from "hono/secure-headers";
 import type {
+  AccountDto,
   Bootstrap,
-  Card,
-  ChatMessageDto,
   DeskState,
-  ErrorCode,
-  ExpenseDto,
+  LinkPreviewDto,
   PolicyCheckDto,
   PolicyDto,
   TurnResult,
 } from "../../../shared/contract";
 import { cancelDraftById, confirmDraftById, handleMessage } from "../assistant/assistant";
-import { toMessageDtos } from "./present";
 import { getPendingReceipt } from "../assistant/pending-receipts";
 import { handleReceipt, resolvePendingCurrency } from "../assistant/receipts";
-import type { AssistantDeps, AssistantReply, MessageMeta } from "../assistant/types";
+import type { AssistantDeps, AssistantReply } from "../assistant/types";
 import { utcDay } from "../lib/dates";
 import { ValidationError } from "../lib/errors";
 import { MAX_IMAGE_BYTES } from "../lib/images";
 import { toCents } from "../lib/money";
-import {
-  type Message,
-  clearConversation,
-  latestMessageId,
-  listMessagesAfter,
-  listRecentMessages,
-} from "../services/conversations";
+import { clearConversation, latestMessageId, listMessagesAfter, listRecentMessages } from "../services/conversations";
 import {
   type Expense,
   type ExpenseStatus,
   getActiveDraft,
-  getExpensesByIds,
   getSpendingSummary,
   listExpenses,
 } from "../services/expenses";
+import {
+  type HandoffLookup,
+  codeAttemptsExhausted,
+  findHandoff,
+  normalizeCode,
+  recordCodeFailure,
+  redeemHandoff,
+  spendHandoff,
+} from "../services/handoff";
 import { CATEGORIES, type Category, POLICY, evaluateExpense } from "../services/policy";
-import { findOrCreateUser, findUser } from "../services/users";
+import {
+  type AccountRow,
+  SESSION_DAYS,
+  createGuestSession,
+  deleteSession,
+  getAccount,
+  guestContents,
+  newToken,
+  plausibleToken,
+  sha256Hex,
+  userForSession,
+} from "../services/sessions";
+import { type ChannelOptions, afterResponse } from "./channels";
+import { toMessageDtos } from "./present";
+import { webActionNotice } from "./telegram-render";
 
 /**
  * The web channel. It knows about HTTP, cookies and uploads, and nothing about
- * expense rules: every route resolves the user from the session cookie, calls
- * the shared assistant or a service with that user id, and maps the result to
- * the types in shared/contract.ts.
+ * expense rules: every route resolves the account from the session cookie,
+ * calls the shared assistant or a service with that account, and maps the
+ * result to the types in shared/contract.ts.
+ *
+ * A session opens one account: its own guest account, or, after a handoff
+ * from Telegram, that Telegram account. The browser never names an account.
  */
 
 const SESSION_COOKIE = "expenso_session";
-const SESSION_DAYS = 30;
+/** The guest session a browser had before it connected to Telegram, kept so Disconnect can bring it back. */
+const GUEST_COOKIE = "expenso_guest";
 const HISTORY_ON_LOAD = 60;
 const RECENT_ON_DESK = 8;
 /** Multipart framing and a caption add a little to the image itself. */
@@ -58,29 +75,25 @@ type WebEnv = { Bindings: Env; Variables: Vars };
 
 // ── Session ─────────────────────────────────────────────────────────────────
 
-function newToken(): string {
-  const bytes = crypto.getRandomValues(new Uint8Array(32));
-  return btoa(String.fromCharCode(...bytes))
-    .replaceAll("+", "-")
-    .replaceAll("/", "_")
-    .replaceAll("=", "");
+/** Session cookies: readable by no script, sent only to this site, HTTPS-only when served over HTTPS. */
+function setSessionCookie(c: Context<WebEnv>, name: string, token: string) {
+  setCookie(c, name, token, {
+    httpOnly: true,
+    sameSite: "Lax",
+    secure: new URL(c.req.url).protocol === "https:",
+    path: "/",
+    maxAge: SESSION_DAYS * 24 * 60 * 60,
+  });
 }
 
-/**
- * The database never holds the token itself, only this hash, so a leaked
- * table cannot be turned back into working sessions.
- */
-async function sessionId(token: string): Promise<string> {
-  const digest = await crypto.subtle.digest("SHA-256", new TextEncoder().encode(token));
-  const hex = [...new Uint8Array(digest)].map((b) => b.toString(16).padStart(2, "0")).join("");
-  return `s:${hex}`;
+function describeAccount(account: AccountRow, returnsToGuest: boolean): AccountDto {
+  return account.channel === "telegram"
+    ? { kind: "telegram", name: account.display_name, returnsToGuest }
+    : { kind: "guest" };
 }
 
-async function userFromCookie(db: D1Database, token: string | undefined): Promise<number | null> {
-  if (!token || token.length < 40 || token.length > 100) return null;
-  const user = await findUser(db, "web", await sessionId(token));
-  return user?.id ?? null;
-}
+const holdsAnything = (contents: { submitted: number; hasDraft: boolean; messages: number }) =>
+  contents.submitted > 0 || contents.hasDraft || contents.messages > 0;
 
 // ── Desk state ──────────────────────────────────────────────────────────────
 
@@ -104,7 +117,7 @@ async function buildDesk(db: D1Database, userId: number, now: Date): Promise<Des
 
 // ── Routes ──────────────────────────────────────────────────────────────────
 
-export function webRoutes(makeDeps: (env: Env) => AssistantDeps) {
+export function webRoutes(makeDeps: (env: Env) => AssistantDeps, channels: ChannelOptions) {
   const web = new Hono<WebEnv>();
   const nowOf = (deps: AssistantDeps) => (deps.now ?? (() => new Date()))();
 
@@ -138,9 +151,25 @@ export function webRoutes(makeDeps: (env: Env) => AssistantDeps) {
     await next();
   });
 
+  /** The full workspace for an account, as the browser loads it. */
+  async function bootstrap(c: Context<WebEnv>, userId: number): Promise<Bootstrap> {
+    const deps = c.get("deps");
+    const now = nowOf(deps);
+    const [history, account, guest] = await Promise.all([
+      listRecentMessages(deps.db, userId, HISTORY_ON_LOAD),
+      getAccount(deps.db, userId),
+      userForSession(deps.db, getCookie(c, GUEST_COOKIE), now),
+    ]);
+    return {
+      messages: await toMessageDtos(deps.db, userId, history),
+      desk: await buildDesk(deps.db, userId, now),
+      account: describeAccount(account!, guest !== null && guest !== userId),
+    };
+  }
+
   /** Runs one turn and answers with what it added to the conversation plus the fresh desk. */
   async function turn(
-    c: { get: <K extends keyof Vars>(key: K) => Vars[K]; json: (body: TurnResult) => Response },
+    c: Context<WebEnv>,
     run: (deps: AssistantDeps, userId: number) => Promise<AssistantReply>,
   ): Promise<Response> {
     const deps = c.get("deps");
@@ -161,29 +190,16 @@ export function webRoutes(makeDeps: (env: Env) => AssistantDeps) {
     return c.json(result);
   }
 
-  // Opens the workspace: the existing session if the cookie is valid, a new one otherwise.
+  // Opens the workspace: the account this browser's session opens, or a new guest.
   web.post("/session", async (c) => {
     const deps = c.get("deps");
-    let userId = await userFromCookie(deps.db, getCookie(c, SESSION_COOKIE));
-
+    let userId = await userForSession(deps.db, getCookie(c, SESSION_COOKIE), nowOf(deps));
     if (userId === null) {
-      const token = newToken();
-      userId = (await findOrCreateUser(deps.db, { channel: "web", externalId: await sessionId(token) })).id;
-      setCookie(c, SESSION_COOKIE, token, {
-        httpOnly: true, // not readable by scripts
-        sameSite: "Lax",
-        secure: new URL(c.req.url).protocol === "https:",
-        path: "/",
-        maxAge: SESSION_DAYS * 24 * 60 * 60,
-      });
+      const guest = await createGuestSession(deps.db, nowOf(deps));
+      setSessionCookie(c, SESSION_COOKIE, guest.token);
+      userId = guest.userId;
     }
-
-    const history = await listRecentMessages(deps.db, userId, HISTORY_ON_LOAD);
-    const body: Bootstrap = {
-      messages: await toMessageDtos(deps.db, userId, history),
-      desk: await buildDesk(deps.db, userId, nowOf(deps)),
-    };
-    return c.json(body);
+    return c.json(await bootstrap(c, userId));
   });
 
   // Every route below needs a session. They are listed, not wildcarded, so
@@ -197,15 +213,162 @@ export function webRoutes(makeDeps: (env: Env) => AssistantDeps) {
     "/expenses/*",
     "/policy",
     "/policy/*",
+    "/link/*",
+    "/session/disconnect",
   ];
   web.on(["GET", "POST"], PROTECTED, async (c, next) => {
-    const userId = await userFromCookie(c.get("deps").db, getCookie(c, SESSION_COOKIE));
+    const deps = c.get("deps");
+    const userId = await userForSession(deps.db, getCookie(c, SESSION_COOKIE), nowOf(deps));
     if (userId === null) {
       return c.json({ error: { code: "no_session", message: "No active session." } }, 401);
     }
     c.set("userId", userId);
     await next();
   });
+
+  // ── Continuing from Telegram ───────────────────────────────────────────────
+
+  type LinkCheck =
+    | { ok: true; handoffId: number; target: AccountRow; current: AccountRow }
+    | { ok: false; response: Response };
+
+  const refuse = (c: Context<WebEnv>, status: 404 | 409 | 410 | 429 | 503, code: string, message: string): LinkCheck => ({
+    ok: false,
+    response: c.json({ error: { code, message } }, status),
+  });
+
+  const AGAIN = "Send /web to Expenso in Telegram for a new one.";
+
+  /**
+   * Checks a link token or typed code against this browser without using it.
+   * Preview and redeem both go through it, so they refuse for the same reasons.
+   */
+  async function checkLink(c: Context<WebEnv>): Promise<LinkCheck> {
+    const deps = c.get("deps");
+    const now = nowOf(deps);
+    const body: unknown = await c.req.json().catch(() => null);
+    const input = (typeof body === "object" && body !== null ? body : {}) as { token?: unknown; code?: unknown };
+    const key = channels.linkKey(c.env);
+    if (!key) return refuse(c, 503, "link_unavailable", "Connecting to Telegram is not set up on this server.");
+
+    let lookup: HandoffLookup;
+    const byCode = input.code !== undefined;
+    if (input.token !== undefined) {
+      if (!plausibleToken(input.token)) return refuse(c, 404, "link_invalid", `That link isn't valid. ${AGAIN}`);
+      lookup = await findHandoff(deps.db, { token: input.token }, key, now);
+    } else if (byCode) {
+      // A code is short, so wrong ones are counted: per browser, and across the whole app.
+      if (await codeAttemptsExhausted(deps.db, c.get("userId"), now)) {
+        return refuse(c, 429, "too_many_attempts", "Too many wrong codes today. Use the link from Telegram instead.");
+      }
+      const code = normalizeCode(input.code);
+      lookup = code ? await findHandoff(deps.db, { code }, key, now) : { status: "unknown" };
+      if (lookup.status === "unknown") await recordCodeFailure(deps.db, c.get("userId"), now);
+    } else {
+      throw new ValidationError("Expected a token or a code.");
+    }
+
+    if (lookup.status === "unknown") {
+      return refuse(c, 404, "link_invalid", byCode ? "That code isn't right. Check it and try again." : `That link isn't valid. ${AGAIN}`);
+    }
+    if (lookup.status !== "valid") {
+      const what = byCode ? "code" : "link";
+      return lookup.status === "used"
+        ? refuse(c, 410, "link_used", `That ${what} was already used. ${AGAIN}`)
+        : refuse(c, 410, "link_expired", `That ${what} has expired. ${AGAIN}`);
+    }
+
+    const [target, current] = await Promise.all([getAccount(deps.db, lookup.userId), getAccount(deps.db, c.get("userId"))]);
+    if (!target || target.channel !== "telegram" || !current) {
+      return refuse(c, 404, "link_invalid", `That link isn't valid. ${AGAIN}`);
+    }
+    // One browser, one Telegram account: switching accounts is always an explicit Disconnect first.
+    if (current.channel === "telegram" && current.id !== target.id) {
+      return refuse(
+        c,
+        409,
+        "already_connected",
+        "This browser is connected to a different Telegram account. Disconnect it first, then use the link again.",
+      );
+    }
+    return { ok: true, handoffId: lookup.id, target, current };
+  }
+
+  // What the link would do, said before anything changes. Does not use the link.
+  web.post("/link/preview", async (c) => {
+    const check = await checkLink(c);
+    if (!check.ok) return check.response;
+    const { target, current } = check;
+    const preview: LinkPreviewDto = {
+      name: target.display_name,
+      sameAccount: current.id === target.id,
+      guest: current.channel === "web" ? await guestContents(c.get("deps").db, current.id) : null,
+    };
+    return c.json(preview);
+  });
+
+  // Uses the link and opens the Telegram account in this browser.
+  web.post("/link/redeem", async (c) => {
+    const check = await checkLink(c);
+    if (!check.ok) return check.response;
+    const deps = c.get("deps");
+    const now = nowOf(deps);
+    const { handoffId, target, current } = check;
+
+    if (current.id === target.id) {
+      // Already this account. The link is spent so it works nowhere else; nothing else changes.
+      await spendHandoff(deps.db, handoffId, now);
+      return c.json(await bootstrap(c, target.id));
+    }
+
+    // Always a brand-new session, so no session id can be planted in advance.
+    // Using the link and creating the session are one transaction.
+    const token = newToken();
+    if (!(await redeemHandoff(deps.db, handoffId, await sha256Hex(token), now))) {
+      return c.json(
+        { error: { code: "link_used", message: `That link was already used. ${AGAIN}` } },
+        410,
+      );
+    }
+
+    // The guest workspace is never merged and never dropped: if it holds anything, its key is kept.
+    const oldToken = getCookie(c, SESSION_COOKIE);
+    const keepGuest = !!oldToken && holdsAnything(await guestContents(deps.db, current.id));
+    if (keepGuest) setSessionCookie(c, GUEST_COOKIE, oldToken);
+    setSessionCookie(c, SESSION_COOKIE, token);
+
+    const body = await bootstrap(c, target.id);
+    return c.json({ ...body, account: describeAccount(target, keepGuest) });
+  });
+
+  // Signs this browser out of the Telegram account. The account and its data are untouched.
+  web.post("/session/disconnect", async (c) => {
+    const deps = c.get("deps");
+    const now = nowOf(deps);
+    const current = await getAccount(deps.db, c.get("userId"));
+    if (current?.channel !== "telegram") {
+      return c.json({ error: { code: "not_connected", message: "This browser is not connected to Telegram." } }, 409);
+    }
+    const token = getCookie(c, SESSION_COOKIE);
+    if (token) await deleteSession(deps.db, token);
+
+    // Back to the guest workspace this browser had, if it is still there; otherwise a fresh guest.
+    const guestToken = getCookie(c, GUEST_COOKIE);
+    let userId = await userForSession(deps.db, guestToken, now);
+    if (userId !== null && guestToken) {
+      setSessionCookie(c, SESSION_COOKIE, guestToken);
+    } else {
+      const guest = await createGuestSession(deps.db, now);
+      setSessionCookie(c, SESSION_COOKIE, guest.token);
+      userId = guest.userId;
+    }
+    deleteCookie(c, GUEST_COOKIE, { path: "/" });
+
+    const body = await bootstrap(c, userId);
+    return c.json({ ...body, account: { kind: "guest" } satisfies AccountDto });
+  });
+
+  // ── The workspace ──────────────────────────────────────────────────────────
 
   web.post("/chat", async (c) => {
     const body: unknown = await c.req.json().catch(() => null);
@@ -220,8 +383,7 @@ export function webRoutes(makeDeps: (env: Env) => AssistantDeps) {
     const deps = c.get("deps");
     const userId = c.get("userId");
     await clearConversation(deps.db, userId);
-    const body: Bootstrap = { messages: [], desk: await buildDesk(deps.db, userId, nowOf(deps)) };
-    return c.json(body);
+    return c.json({ ...(await bootstrap(c, userId)), messages: [] });
   });
 
   web.post("/receipts", async (c) => {
@@ -262,20 +424,57 @@ export function webRoutes(makeDeps: (env: Env) => AssistantDeps) {
     return Number(raw);
   };
 
+  /**
+   * After a confirm or discard on the web of an account that also lives in
+   * Telegram: tell Telegram, once. Only a real change sends a notice (a
+   * repeated press changes nothing and sends nothing), it is sent after the
+   * change is stored, and a failed notice cannot undo or fail the change.
+   */
+  async function noticeToTelegram(c: Context<WebEnv>, reply: AssistantReply | undefined): Promise<void> {
+    if (!reply?.transition) return;
+    const account = await getAccount(c.get("deps").db, c.get("userId"));
+    const chatId = Number(account?.external_id);
+    if (account?.channel !== "telegram" || !Number.isSafeInteger(chatId)) return;
+    const api = channels.telegramApi(c.env);
+    if (!api) return;
+    const text = webActionNotice(reply.transition);
+    await afterResponse(
+      c,
+      api
+        .call("sendMessage", { chat_id: chatId, text, parse_mode: "HTML", link_preview_options: { is_disabled: true } })
+        .catch((error: unknown) => {
+          // The kind of failure only: never the message, the chat or a URL.
+          console.warn(`telegram_notice_failed error=${error instanceof Error ? error.name : "unknown"}`);
+        }),
+    );
+  }
+
   web.post("/expenses/:id/confirm", async (c) => {
     const id = expenseId(c.req.param("id"));
-    return turn(c, (deps, userId) => confirmDraftById(deps, { userId, expenseId: id }));
+    let reply: AssistantReply | undefined;
+    const response = await turn(c, async (deps, userId) => {
+      reply = await confirmDraftById(deps, { userId, expenseId: id });
+      return reply;
+    });
+    await noticeToTelegram(c, reply);
+    return response;
   });
 
   web.post("/expenses/:id/cancel", async (c) => {
     const id = expenseId(c.req.param("id"));
-    return turn(c, (deps, userId) => cancelDraftById(deps, { userId, expenseId: id }));
+    let reply: AssistantReply | undefined;
+    const response = await turn(c, async (deps, userId) => {
+      reply = await cancelDraftById(deps, { userId, expenseId: id });
+      return reply;
+    });
+    await noticeToTelegram(c, reply);
+    return response;
   });
 
   web.get("/expenses", async (c) => {
     const q = c.req.query();
     const limit = q.limit === undefined ? 50 : Number(q.limit);
-    // The service validates every filter and scopes the query to the user.
+    // The service validates every filter and scopes the query to the account.
     const expenses: Expense[] = await listExpenses(c.get("deps").db, c.get("userId"), {
       status: q.status as ExpenseStatus | undefined,
       category: q.category as Category | undefined,

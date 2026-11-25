@@ -10,7 +10,7 @@ import {
 } from "react";
 import type { TurnResult } from "../../../shared/contract";
 import * as api from "../api/client";
-import { RequestError } from "../api/client";
+import { type LinkCredential, RequestError } from "../api/client";
 import { prepareImage } from "../lib/image";
 import { type Outgoing, type State, type Turn, initialState, reducer } from "./reducer";
 
@@ -35,6 +35,13 @@ export interface Actions {
   retry: () => void;
   /** Clears the conversation and returns to the first screen. Expenses and any draft are kept. */
   newConversation: () => void;
+  /** Checks a Telegram link or code and asks the user to confirm. */
+  startLink: (credential: LinkCredential) => void;
+  /** The user confirmed: connect this browser to that Telegram account. */
+  confirmLink: () => void;
+  dismissLink: () => void;
+  /** Signs this browser out of its Telegram account. */
+  disconnect: () => void;
   /** Puts text in the composer for the user to finish. */
   seedComposer: (text: string) => void;
   seedUsed: () => void;
@@ -43,19 +50,94 @@ export interface Actions {
 
 const Context = createContext<{ state: State; actions: Actions } | null>(null);
 
+/**
+ * A handoff link carries its one-time key in the fragment (#link=…), which
+ * never reaches a server. This takes the key and removes it from the address
+ * bar and the history at once, so it is not left behind for anyone else.
+ */
+function takeLinkFromAddress(): string | null {
+  const match = /^#link=([A-Za-z0-9_-]{20,200})$/.exec(window.location.hash);
+  if (!match) return null;
+  window.history.replaceState(null, "", `${window.location.pathname}${window.location.search}#/assistant`);
+  return match[1] ?? null;
+}
+
 export function ExpensoProvider({ children }: { children: ReactNode }) {
   const [state, dispatch] = useReducer(reducer, initialState);
   const busy = useRef(false);
   const lastAttempt = useRef<Attempt | null>(null);
 
-  const boot = useCallback(() => {
+  const linkRef = useRef(state.link);
+  linkRef.current = state.link;
+
+  const startLink = useCallback((credential: LinkCredential) => {
+    dispatch({ type: "link_started", credential });
     api
-      .openSession()
-      .then((bootstrap) => dispatch({ type: "booted", bootstrap }))
-      .catch(() => dispatch({ type: "boot_failed" }));
+      .previewLink(credential)
+      .then((preview) => dispatch({ type: "link_previewed", preview }))
+      .catch((error: unknown) =>
+        dispatch({
+          type: "link_failed",
+          message: error instanceof RequestError ? error.message : "Something went wrong. Please try again.",
+        }),
+      );
   }, []);
 
+  const boot = useCallback(() => {
+    const token = takeLinkFromAddress();
+
+    api
+      .openSession()
+      .then((bootstrap) => {
+        dispatch({ type: "booted", bootstrap });
+        if (token) startLink({ token });
+      })
+      .catch(() => dispatch({ type: "boot_failed" }));
+  }, [startLink]);
+
   useEffect(boot, [boot]);
+
+  // A link opened in a tab where Expenso is already running changes only the fragment.
+  const isReady = state.status === "ready";
+  useEffect(() => {
+    if (!isReady) return;
+    const onHash = () => {
+      const token = takeLinkFromAddress();
+      if (token) startLink({ token });
+    };
+    window.addEventListener("hashchange", onHash);
+    return () => window.removeEventListener("hashchange", onHash);
+  }, [isReady, startLink]);
+
+  // One conversation, two channels: when the user comes back to this tab (and
+  // every 20 seconds while it is in view and connected), read the server again,
+  // so a receipt sent or a slip confirmed in Telegram shows up here.
+  const connected = state.account?.kind === "telegram";
+  const ready = state.status === "ready";
+  useEffect(() => {
+    if (!ready) return;
+    let inFlight = false;
+    const refresh = () => {
+      if (document.visibilityState !== "visible" || busy.current || inFlight || linkRef.current) return;
+      inFlight = true;
+      api
+        .openSession()
+        .then((bootstrap) => dispatch({ type: "refreshed", bootstrap }))
+        .catch(() => {})
+        .finally(() => {
+          inFlight = false;
+        });
+    };
+    const onVisible = () => document.visibilityState === "visible" && refresh();
+    document.addEventListener("visibilitychange", onVisible);
+    window.addEventListener("focus", refresh);
+    const timer = connected ? window.setInterval(refresh, 20_000) : undefined;
+    return () => {
+      document.removeEventListener("visibilitychange", onVisible);
+      window.removeEventListener("focus", refresh);
+      if (timer) window.clearInterval(timer);
+    };
+  }, [ready, connected]);
 
   /** Runs one turn. Only one runs at a time; a second request while busy is ignored. */
   const run = useCallback(
@@ -142,11 +224,46 @@ export function ExpensoProvider({ children }: { children: ReactNode }) {
             busy.current = false;
           });
       },
+      startLink,
+      confirmLink: () => {
+        const flow = linkRef.current;
+        if (!flow || flow.stage !== "ready" || busy.current) return;
+        busy.current = true;
+        dispatch({ type: "link_connecting" });
+        api
+          .redeemLink(flow.credential)
+          .then((bootstrap) => {
+            dispatch({ type: "workspace_replaced", bootstrap });
+            dispatch({ type: "link_closed" });
+            window.location.hash = "#/assistant";
+          })
+          .catch((error: unknown) =>
+            dispatch({
+              type: "link_failed",
+              message: error instanceof RequestError ? error.message : "Something went wrong. Please try again.",
+            }),
+          )
+          .finally(() => {
+            busy.current = false;
+          });
+      },
+      dismissLink: () => dispatch({ type: "link_closed" }),
+      disconnect: () => {
+        if (busy.current) return;
+        busy.current = true;
+        api
+          .disconnectBrowser()
+          .then((bootstrap) => dispatch({ type: "workspace_replaced", bootstrap }))
+          .catch(() => dispatch({ type: "turn_rejected", message: "This browser could not be disconnected. Please try again." }))
+          .finally(() => {
+            busy.current = false;
+          });
+      },
       seedComposer: (text) => dispatch({ type: "seed", text }),
       seedUsed: () => dispatch({ type: "seed_used" }),
       clearNotice: () => dispatch({ type: "notice_cleared" }),
     };
-  }, [boot, run]);
+  }, [boot, run, startLink]);
 
   const value = useMemo(() => ({ state, actions }), [state, actions]);
   return <Context.Provider value={value}>{children}</Context.Provider>;

@@ -4,7 +4,10 @@ import { handleReceipt, resolvePendingCurrency } from "../assistant/receipts";
 import type { AssistantDeps, AssistantReply } from "../assistant/types";
 import { MAX_IMAGE_BYTES } from "../lib/images";
 import { latestMessageId, listMessagesAfter } from "../services/conversations";
+import { handoffLink, issueHandoff } from "../services/handoff";
+import { revokeWebAccess } from "../services/sessions";
 import { findOrCreateUser } from "../services/users";
+import type { ChannelOptions } from "./channels";
 import { toMessageDtos } from "./present";
 import { type TelegramApi, TelegramError } from "./telegram-api";
 import {
@@ -16,9 +19,12 @@ import {
   type TelegramMessage,
   UNSUPPORTED,
   WELCOME,
+  continueOnWebRow,
   esc,
+  hasDraftButtons,
   parseCallback,
   renderMessage,
+  webAccessMessage,
 } from "./telegram-render";
 
 /**
@@ -94,7 +100,11 @@ function sameSecret(given: string | undefined, expected: string): boolean {
   return difference === 0;
 }
 
-export function telegramRoutes(makeDeps: (env: Env) => AssistantDeps, options: TelegramOptions) {
+export function telegramRoutes(
+  makeDeps: (env: Env) => AssistantDeps,
+  options: TelegramOptions,
+  channels: ChannelOptions,
+) {
   const routes = new Hono<{ Bindings: Env }>();
 
   routes.post("/", async (c) => {
@@ -112,7 +122,8 @@ export function telegramRoutes(makeDeps: (env: Env) => AssistantDeps, options: T
     const update = (await c.req.json().catch(() => null)) as TgUpdate | null;
     if (!update || !isId(update.update_id)) return c.json({ ok: true });
 
-    const deps = makeDeps(c.env);
+    // Everything said here is marked as coming from Telegram, so the shared conversation can show it.
+    const deps: AssistantDeps = { ...makeDeps(c.env), channel: "telegram" };
     // Telegram may deliver an update more than once. The first insert wins.
     const fresh = await deps.db
       .prepare("INSERT INTO telegram_updates (update_id) VALUES (?) ON CONFLICT DO NOTHING RETURNING update_id")
@@ -120,7 +131,8 @@ export function telegramRoutes(makeDeps: (env: Env) => AssistantDeps, options: T
       .first();
     if (!fresh) return c.json({ ok: true });
 
-    const work = handleUpdate(deps, options.makeApi(c.env), update);
+    const link: LinkConfig = { key: channels.linkKey(c.env), webUrl: channels.webUrl(c.env) };
+    const work = handleUpdate(deps, options.makeApi(c.env), update, link);
     let background: { waitUntil(promise: Promise<unknown>): void } | undefined;
     try {
       background = c.executionCtx;
@@ -135,8 +147,14 @@ export function telegramRoutes(makeDeps: (env: Env) => AssistantDeps, options: T
   return routes;
 }
 
+/** What the bot needs to offer the web: a key for codes and the configured public address. */
+interface LinkConfig {
+  key: string | undefined;
+  webUrl: string | null;
+}
+
 /** Handles one update. Never throws: whatever happens, the user gets an answer if one can be sent. */
-async function handleUpdate(deps: AssistantDeps, api: TelegramApi, update: TgUpdate): Promise<void> {
+async function handleUpdate(deps: AssistantDeps, api: TelegramApi, update: TgUpdate, link: LinkConfig): Promise<void> {
   const chat = update.message?.chat ?? update.callback_query?.message?.chat;
   const startedAt = Date.now();
 
@@ -157,9 +175,9 @@ async function handleUpdate(deps: AssistantDeps, api: TelegramApi, update: TgUpd
 
   try {
     const work = update.message
-      ? onMessage(deps, api, send, update.message, startedAt)
+      ? onMessage(deps, api, send, update.message, startedAt, link)
       : update.callback_query
-        ? onCallback(deps, api, send, update.callback_query)
+        ? onCallback(deps, api, send, update.callback_query, link)
         : Promise.resolve();
     const result = await Promise.race([work, outOfTime]);
     if (result === "timeout" && chat && isId(chat.id) && chat.type === "private") {
@@ -213,6 +231,7 @@ async function turn(
   chatId: number,
   userId: number,
   run: (deps: AssistantDeps) => Promise<AssistantReply>,
+  link: LinkConfig,
 ): Promise<void> {
   const before = await latestMessageId(deps.db, userId);
   const reply = await run(deps);
@@ -224,7 +243,15 @@ async function turn(
     await send(chatId, { text: esc(reply.reply) });
     return;
   }
-  for (const message of messages) await send(chatId, renderMessage(message));
+  for (const message of messages) {
+    const rendered = renderMessage(message);
+    // A draft to review is the moment to offer the bigger screen: one tap, one-time link.
+    if (hasDraftButtons(rendered) && link.key && link.webUrl) {
+      const ticket = await issueHandoff(deps.db, userId, link.key, (deps.now ?? (() => new Date()))());
+      rendered.buttons = [...(rendered.buttons ?? []), continueOnWebRow(handoffLink(link.webUrl, ticket.token))];
+    }
+    await send(chatId, rendered);
+  }
 }
 
 async function userIdFor(deps: AssistantDeps, from: TgUser): Promise<number> {
@@ -255,6 +282,7 @@ async function onMessage(
   send: Send,
   message: TgMessage,
   startedAt: number,
+  link: LinkConfig,
 ): Promise<void> {
   const { chat, from } = message;
   // Private chats only: in a group there is no single person whose expenses these are.
@@ -271,6 +299,25 @@ async function onMessage(
   if (command === "start") {
     await userIdFor(deps, from);
     return send(chatId, { text: WELCOME });
+  }
+  if (command === "web") {
+    const userId = await userIdFor(deps, from);
+    if (!link.key) return send(chatId, { text: "Continuing on the web is not set up on this server yet." });
+    const ticket = await issueHandoff(deps.db, userId, link.key, (deps.now ?? (() => new Date()))());
+    return send(
+      chatId,
+      webAccessMessage({ link: link.webUrl ? handoffLink(link.webUrl, ticket.token) : null, code: ticket.code, webUrl: link.webUrl }),
+    );
+  }
+  if (command === "signout") {
+    const userId = await userIdFor(deps, from);
+    const browsers = await revokeWebAccess(deps.db, userId);
+    return send(chatId, {
+      text:
+        browsers > 0
+          ? `Signed out of ${browsers} ${browsers === 1 ? "browser" : "browsers"}. Any links or codes you had no longer work.`
+          : "No browser was signed in. Any links or codes you had no longer work.",
+    });
   }
   if (command !== null && command !== "confirm" && command !== "cancel") {
     return send(chatId, { text: command === "help" ? HELP : `I don't know that command.\n\n${HELP}` });
@@ -298,8 +345,13 @@ async function onMessage(
       }
       const caption = typeof message.caption === "string" ? message.caption : undefined;
       // The bytes decide the format; what Telegram called the file does not.
-      return await turn(withinBudget(deps, startedAt), send, chatId, userId, (d) =>
-        handleReceipt(d, { userId, image: bytes, caption }),
+      return await turn(
+        withinBudget(deps, startedAt),
+        send,
+        chatId,
+        userId,
+        (d) => handleReceipt(d, { userId, image: bytes, caption }),
+        link,
       );
     }
 
@@ -307,8 +359,13 @@ async function onMessage(
 
     // "/confirm" and "/cancel" are the same exact commands the assistant already handles without the model.
     const input = command ?? text;
-    return await turn(withinBudget(deps, startedAt), send, chatId, userId, (d) =>
-      handleMessage(d, { userId, text: input }),
+    return await turn(
+      withinBudget(deps, startedAt),
+      send,
+      chatId,
+      userId,
+      (d) => handleMessage(d, { userId, text: input }),
+      link,
     );
   } finally {
     stopTyping();
@@ -333,7 +390,13 @@ function pickImage(message: TgMessage): TgFile | "unsupported" | "too_large" | n
   return other.some((kind) => message[kind] !== undefined) ? "unsupported" : null;
 }
 
-async function onCallback(deps: AssistantDeps, api: TelegramApi, send: Send, callback: TgCallback): Promise<void> {
+async function onCallback(
+  deps: AssistantDeps,
+  api: TelegramApi,
+  send: Send,
+  callback: TgCallback,
+  link: LinkConfig,
+): Promise<void> {
   // Always acknowledged first, so the button stops showing its spinner.
   await api.call("answerCallbackQuery", { callback_query_id: callback.id }).catch(() => {});
 
@@ -369,5 +432,5 @@ async function onCallback(deps: AssistantDeps, api: TelegramApi, send: Send, cal
         return resolvePendingCurrency(d, { userId, currency: action.currency });
     }
   };
-  await turn(deps, send, chatId, userId, run);
+  await turn(deps, send, chatId, userId, run, link);
 }

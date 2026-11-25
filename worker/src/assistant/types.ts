@@ -40,6 +40,8 @@ export interface AssistantDeps {
   config: AssistantConfig;
   /** The current time; replaceable in tests. */
   now?: () => Date;
+  /** Where the user's messages are coming from, so a shared conversation can show it. Defaults to web. */
+  channel?: "web" | "telegram";
 }
 
 /** Everything that can go wrong while talking to the model. */
@@ -94,6 +96,8 @@ export interface MessageMeta {
   lead?: string;
   /** On a user message: a receipt photo was sent. The image is not stored. */
   attachment?: "receipt_photo";
+  /** On a user message: it was sent from Telegram (absent means the web). */
+  via?: "telegram";
   card?: StoredCard;
   error?: AssistantErrorCode;
 }
@@ -107,4 +111,10 @@ export interface AssistantReply {
   error?: AssistantErrorCode;
   /** Set when the turn analysed a receipt photo: what was read, in structured form. */
   receipt?: ReceiptAnalysis;
+  /**
+   * Set only when this turn changed an expense's state (a draft submitted or
+   * discarded). A repeated press that changed nothing leaves it unset, which is
+   * what lets a channel notify the other one exactly once.
+   */
+  transition?: { kind: "submitted" | "cancelled"; expense: Expense };
 }

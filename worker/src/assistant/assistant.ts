@@ -43,6 +43,13 @@ interface Outcome {
   lead?: string;
   card?: StoredCard;
   error?: AssistantErrorCode;
+  /** See AssistantReply.transition. */
+  transition?: AssistantReply["transition"];
+}
+
+/** Metadata for a user message: which channel it came from, when that is not the web. */
+export function userMeta(deps: AssistantDeps, meta: MessageMeta = {}): MessageMeta {
+  return deps.channel === "telegram" ? { ...meta, via: "telegram" } : meta;
 }
 
 /** Stores the assistant's words and returns the reply together with the current draft. Every turn ends here. */
@@ -59,9 +66,10 @@ export async function finish(
 
   await appendMessage(deps.db, userId, "assistant", text, meta);
   const pendingExpense = await getActiveDraft(deps.db, userId);
-  return outcome.error
-    ? { reply: text, pendingExpense, error: outcome.error }
-    : { reply: text, pendingExpense };
+  const reply: AssistantReply = { reply: text, pendingExpense };
+  if (outcome.error) reply.error = outcome.error;
+  if (outcome.transition) reply.transition = outcome.transition;
+  return reply;
 }
 
 // ── Explicit confirm / cancel ───────────────────────────────────────────────
@@ -86,6 +94,7 @@ async function confirm(deps: AssistantDeps, userId: number, expenseId: number): 
         text: submittedNotice(result.expense),
         lead: "",
         card: { kind: "expense", event: "submitted", expenseId },
+        transition: { kind: "submitted", expense: result.expense },
       };
     case "already_submitted":
       return {
@@ -113,6 +122,7 @@ async function cancel(deps: AssistantDeps, userId: number, expenseId: number): P
         text: `Draft discarded: ${describeExpense(result.expense)}`,
         lead: "",
         card: { kind: "expense", event: "cancelled", expenseId },
+        ...(result.outcome === "cancelled" ? { transition: { kind: "cancelled" as const, expense: result.expense } } : {}),
       };
     case "already_submitted":
       return {
@@ -247,7 +257,7 @@ export async function handleMessage(
     };
   }
 
-  await appendMessage(deps.db, userId, "user", text);
+  await appendMessage(deps.db, userId, "user", text, userMeta(deps));
 
   const command = parseCommand(text);
   if (command) {

@@ -27,6 +27,7 @@ const app = createApp({
       retryDelaysMs: [0, 0],
     },
   }),
+  channels: { linkKey: () => "test-code-key", webUrl: () => null, telegramApi: () => null },
 });
 
 const prepare = (overrides: Record<string, unknown> = {}) =>
@@ -201,6 +202,7 @@ describe("chat", () => {
         now: () => NOW,
         config: { userDailyLimit: 0, appDailyLimit: 10, appPerMinuteLimit: 10, maxRounds: 5, requestTimeoutMs: 1000, receiptRequestTimeoutMs: 1000, deadlineMs: 2000, retryDelaysMs: [] },
       }),
+      channels: { linkKey: () => "test-code-key", webUrl: () => null, telegramApi: () => null },
     });
     const session = await limited.request("/api/session", { method: "POST" }, env);
     const cookie = session.headers.get("set-cookie")!.split(";")[0]!;

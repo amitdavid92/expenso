@@ -4,6 +4,7 @@ import type {
   Category,
   ExpenseDto,
   ExpenseStatus,
+  LinkPreviewDto,
   PolicyCheckDto,
   PolicyDto,
   TurnResult,
@@ -91,6 +92,24 @@ export function openSession(): Promise<Bootstrap> {
 /** Clears the conversation on the server. Expenses and any draft are kept. */
 export function resetConversation(): Promise<Bootstrap> {
   return withSession(() => request<Bootstrap>("/api/conversation/reset", { method: "POST" }, QUICK_TIMEOUT_MS));
+}
+
+/** A one-time key from Telegram: the token from a link, or the code typed by hand. */
+export type LinkCredential = { token: string } | { code: string };
+
+/** What a link or code would do. Uses nothing up. */
+export function previewLink(credential: LinkCredential): Promise<LinkPreviewDto> {
+  return withSession(() => request<LinkPreviewDto>("/api/link/preview", json(credential), QUICK_TIMEOUT_MS));
+}
+
+/** Uses the link or code and opens that Telegram account in this browser. */
+export function redeemLink(credential: LinkCredential): Promise<Bootstrap> {
+  return withSession(() => request<Bootstrap>("/api/link/redeem", json(credential), QUICK_TIMEOUT_MS));
+}
+
+/** Signs this browser out of the Telegram account; the guest workspace it had comes back, if any. */
+export function disconnectBrowser(): Promise<Bootstrap> {
+  return withSession(() => request<Bootstrap>("/api/session/disconnect", { method: "POST" }, QUICK_TIMEOUT_MS));
 }
 
 export function sendChat(text: string): Promise<TurnResult> {

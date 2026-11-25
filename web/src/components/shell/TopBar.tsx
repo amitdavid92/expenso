@@ -9,13 +9,21 @@ const TABS: { route: Route; label: string }[] = [
   { route: "policy", label: "Policy" },
 ];
 
+const BOT_URL = "https://t.me/GetExpensoBot";
+
 /**
- * Where the Telegram connection will live. Today it only explains what is
- * coming; it makes no claim that anything is connected.
+ * The Telegram connection: whether this browser shows the same conversation as
+ * the Expenso bot, and the way in or out. A guest connects with the one-time
+ * code the bot sends (for a computer without Telegram); a phone just taps the
+ * link in Telegram instead.
  */
 export function TelegramEntry() {
+  const { state, actions } = useExpenso();
   const [open, setOpen] = useState(false);
+  const [code, setCode] = useState("");
   const root = useRef<HTMLDivElement>(null);
+  const account = state.account;
+  const connected = account?.kind === "telegram";
 
   useEffect(() => {
     if (!open) return;
@@ -31,6 +39,8 @@ export function TelegramEntry() {
     };
   }, [open]);
 
+  const name = connected ? (account.name ?? "Telegram") : null;
+
   return (
     <div ref={root} className="relative">
       <button
@@ -40,23 +50,102 @@ export function TelegramEntry() {
         aria-controls="telegram-panel"
         className="inline-flex min-h-10 items-center gap-1.5 rounded-lg border border-line px-2.5 text-sm text-ink transition-colors hover:border-line-strong hover:bg-desk"
       >
-        <PlaneIcon width={17} height={17} />
-        <span className="hidden sm:inline">Telegram</span>
-        <span className="hidden rounded bg-desk-deep px-1.5 py-0.5 text-2xs font-medium text-ink-2 lg:inline">Soon</span>
+        <span className="relative">
+          <PlaneIcon width={17} height={17} />
+          {connected && <span className="absolute -right-0.5 -bottom-0.5 size-2 rounded-full bg-ok ring-2 ring-paper" aria-hidden="true" />}
+        </span>
+        <span className="hidden max-w-32 truncate sm:inline">{connected ? name : "Telegram"}</span>
+        <span className="sr-only">{connected ? `Connected to Telegram as ${name}` : "Telegram: not connected"}</span>
       </button>
+
       {open && (
         <div
           id="telegram-panel"
           role="dialog"
-          aria-label="Telegram"
-          className="absolute top-full right-0 z-20 mt-2 w-72 animate-settle rounded-xl border border-line-strong bg-paper p-4 shadow-[0_12px_32px_-12px_oklch(0.23_0.03_268/0.25)]"
+          aria-label="Telegram connection"
+          className="absolute top-full right-0 z-20 mt-2 w-80 animate-settle rounded-xl border border-line-strong bg-paper p-4 shadow-(--shadow-slip)"
         >
-          <p className="font-medium text-ink">Continue on Telegram</p>
-          <p className="mt-1.5 text-sm text-ink-2">
-            Not connected yet. Soon you will be able to send a receipt from your phone to the Expenso bot and pick the
-            same slip up here.
-          </p>
-          <p className="mt-2.5 text-sm text-ink-3">Coming in a later phase of this demo.</p>
+          {connected ? (
+            <>
+              <p className="flex items-center gap-2 font-semibold text-ink">
+                <span className="size-2 rounded-full bg-ok" aria-hidden="true" />
+                Connected to Telegram{account.name ? ` as ${account.name}` : ""}
+              </p>
+              <p className="mt-1.5 text-sm text-ink-2">
+                This browser shows the same conversation, slip and ledger as the Expenso bot. A change in either place
+                shows in both.
+              </p>
+              <div className="mt-3.5 flex flex-wrap gap-2">
+                <a
+                  href={BOT_URL}
+                  target="_blank"
+                  rel="noreferrer"
+                  className="inline-flex min-h-10 items-center rounded-lg border border-line-strong px-3 text-sm font-medium text-ink hover:border-ink-3"
+                >
+                  Open the bot ↗
+                </a>
+                <button
+                  type="button"
+                  onClick={() => {
+                    setOpen(false);
+                    actions.disconnect();
+                  }}
+                  className="inline-flex min-h-10 items-center rounded-lg px-3 text-sm font-medium text-stop hover:bg-stop-wash"
+                >
+                  Disconnect this browser
+                </button>
+              </div>
+              <p className="mt-2.5 text-xs text-ink-3">
+                {account.returnsToGuest
+                  ? "Disconnecting brings back the guest workspace this browser had before."
+                  : "Your expenses stay in your account. /signout in Telegram signs every browser out."}
+              </p>
+            </>
+          ) : (
+            <>
+              <p className="font-semibold text-ink">Continue from Telegram</p>
+              <p className="mt-1.5 text-sm text-ink-2">
+                Start with a receipt photo in Telegram, finish here. Send <b className="font-medium text-ink">/web</b> to the{" "}
+                <a href={BOT_URL} target="_blank" rel="noreferrer" className="text-indigo underline underline-offset-4">
+                  Expenso bot
+                </a>{" "}
+                and tap its link, or type the code it sends:
+              </p>
+              <form
+                className="mt-3 flex gap-2"
+                onSubmit={(event) => {
+                  event.preventDefault();
+                  if (!code.trim()) return;
+                  setOpen(false);
+                  actions.startLink({ code: code.trim() });
+                  setCode("");
+                }}
+              >
+                <label htmlFor="link-code" className="sr-only">
+                  Code from Telegram
+                </label>
+                <input
+                  id="link-code"
+                  value={code}
+                  onChange={(event) => setCode(event.target.value)}
+                  placeholder="K7QM-4XPD"
+                  autoComplete="one-time-code"
+                  autoCapitalize="characters"
+                  spellCheck={false}
+                  maxLength={12}
+                  className="figure min-h-10 w-full min-w-0 flex-1 rounded-lg border border-line-strong bg-paper px-3 text-base tracking-wider uppercase outline-none focus:border-indigo"
+                />
+                <button
+                  type="submit"
+                  disabled={!code.trim()}
+                  className="inline-flex min-h-10 shrink-0 items-center rounded-lg bg-indigo px-3.5 text-sm font-medium text-white hover:bg-indigo-deep disabled:opacity-50"
+                >
+                  Connect
+                </button>
+              </form>
+              <p className="mt-2.5 text-xs text-ink-3">The code works once and expires in 10 minutes.</p>
+            </>
+          )}
         </div>
       )}
     </div>

@@ -16,10 +16,8 @@ import { POLICY } from "../services/policy";
  * Pure functions; nothing here talks to Telegram or the database.
  */
 
-export interface InlineButton {
-  text: string;
-  callback_data: string;
-}
+/** A button that acts in the bot (callback_data) or opens a page (url). */
+export type InlineButton = { text: string; callback_data: string } | { text: string; url: string };
 
 export interface TelegramMessage {
   /** Telegram HTML. Everything that came from a user, a receipt or the model is escaped. */
@@ -105,13 +103,12 @@ function changeLine(change: FieldChange): string {
   return `${label} changed ${esc(show(change.from))} → ${esc(show(change.to))}`;
 }
 
-/**
- * The buttons under a live draft. This is the one place they are built.
- *
- * Integration point for Phase 6: a "Continue on web" URL button belongs in a
- * second row here, once a signed hand-off link exists. Nothing is shown until
- * it does.
- */
+/** True for a message whose buttons act on a live draft: it is worth offering to continue on the web. */
+export function hasDraftButtons(message: TelegramMessage): boolean {
+  return !!message.buttons?.some((row) => row.some((b) => "callback_data" in b && b.callback_data.startsWith("c:")));
+}
+
+/** The buttons under a live draft. This is the one place they are built. */
 function draftButtons(expense: ExpenseDto): InlineButton[][] {
   return [
     [
@@ -205,9 +202,42 @@ export function renderMessage(message: ChatMessageDto): TelegramMessage {
   return { text: blocks.join("\n\n").slice(0, 4000) || "Done.", buttons };
 }
 
+/** The row that opens this conversation in a browser. The link is a one-time key; it is never logged. */
+export function continueOnWebRow(link: string): InlineButton[] {
+  return [{ text: "Continue on web ↗", url: link }];
+}
+
+/** The /web answer: the link (if a public address is configured) and the code, with how to treat them. */
+export function webAccessMessage(input: { link: string | null; code: string; webUrl: string | null }): TelegramMessage {
+  const where = input.webUrl ? `open <b>${esc(input.webUrl.replace(/^https?:\/\//, ""))}</b>, choose Telegram, and` : "open Expenso on the web, choose Telegram, and";
+  return {
+    text: [
+      "<b>Continue on the web</b>",
+      input.link
+        ? "Tap the button to open this conversation, your current slip and your ledger in a browser."
+        : "Open Expenso in a browser to see this conversation, your current slip and your ledger.",
+      `On a computer without Telegram, ${where} enter this code:\n<code>${input.code}</code>`,
+      "The link and the code work once and expire in 10 minutes. Don't forward them: anyone who has them can open your expenses. /signout signs every browser out.",
+    ].join("\n\n"),
+    buttons: input.link ? [continueOnWebRow(input.link)] : undefined,
+  };
+}
+
+/** A short note in Telegram about something done on the web, sent only when it actually changed an expense. */
+export function webActionNotice(transition: { kind: "submitted" | "cancelled"; expense: ExpenseDto }): string {
+  const { expense } = transition;
+  if (transition.kind === "cancelled") {
+    return `Discarded on the web · ${formatCents(expense.amountCents)} · ${esc(expense.merchant)}`;
+  }
+  return [
+    `<b>Submitted on the web</b> · ${formatCents(expense.amountCents)} · ${esc(expense.merchant)}`,
+    policyLine(expense.category, expense.amountCents),
+  ].join("\n");
+}
+
 export const WELCOME = [
   "<b>Expenso</b> · Snap. Chat. Submit.",
-  "Send me a photo of a receipt and I'll turn it into an expense draft for you to check. Or just tell me what you spent.",
+  "Send me a photo of a receipt and I'll turn it into an expense draft for you to check. Or just tell me what you spent. Everything here is also on the web: send /web to continue there.",
   [
     "Things to try:",
     "· a photo of a receipt",
@@ -221,7 +251,13 @@ export const WELCOME = [
 export const HELP = [
   "<b>How Expenso works</b>",
   "Send a receipt photo, or describe an expense in your own words. I prepare a draft and check it against company policy. To change it, just say what is different.",
-  ["/confirm · submit the current draft", "/cancel · discard it", "/help · this message"].join("\n"),
+  [
+    "/confirm · submit the current draft",
+    "/cancel · discard it",
+    "/web · continue this conversation in a browser",
+    "/signout · sign every browser out",
+    "/help · this message",
+  ].join("\n"),
   "The buttons under a draft do the same as /confirm and /cancel. Only USD is supported.",
 ].join("\n\n");
 

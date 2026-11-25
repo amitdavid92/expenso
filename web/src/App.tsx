@@ -1,4 +1,5 @@
 import { ErrorState } from "./components/ErrorState";
+import { LinkCard } from "./components/shell/LinkCard";
 import { TabBar, TopBar } from "./components/shell/TopBar";
 import { useHashRoute } from "./state/hooks";
 import { ExpensoProvider, useExpenso } from "./state/store";
@@ -48,6 +49,7 @@ function Frame() {
       )}
 
       <TabBar route={route} hasSlip={hasSlip} />
+      <LinkCard />
     </div>
   );
 }

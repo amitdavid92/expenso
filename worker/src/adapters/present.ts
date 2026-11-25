@@ -49,6 +49,7 @@ export async function toMessageDtos(
       createdAt: message.createdAt,
     };
 
+    if (meta.via) dto.via = meta.via;
     if (meta.attachment) {
       dto.attachment = meta.attachment;
       dto.text = message.content.replace(RECEIPT_PLACEHOLDER, "").trim();

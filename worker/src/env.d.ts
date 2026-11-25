@@ -7,6 +7,13 @@ interface ExpensoSecrets {
   GEMINI_API_KEY: string;
   TELEGRAM_BOT_TOKEN: string;
   TELEGRAM_WEBHOOK_SECRET: string;
+  /**
+   * The public address of the web app, e.g. https://expenso.example.workers.dev.
+   * Handoff links from Telegram point here; without it the bot offers codes only.
+   */
+  PUBLIC_WEB_URL?: string;
+  /** Key for hashing short handoff codes. Optional: the webhook secret is used if it is not set. */
+  LINK_CODE_KEY?: string;
 }
 
 declare namespace Cloudflare {

@@ -1,4 +1,13 @@
-import type { Bootstrap, ChatMessageDto, DeskState, ExpenseDto, TurnResult } from "../../../shared/contract";
+import type {
+  AccountDto,
+  Bootstrap,
+  ChatMessageDto,
+  DeskState,
+  ExpenseDto,
+  LinkPreviewDto,
+  TurnResult,
+} from "../../../shared/contract";
+import type { LinkCredential } from "../api/client";
 import { type SlipField, changedFields } from "../lib/diff";
 
 /** What the app is doing right now. One thing at a time. */
@@ -16,8 +25,20 @@ export interface Outgoing {
   receiptPreview?: string;
 }
 
+/** Continuing from Telegram: checking a link or code, asking to confirm, connecting, or explaining why not. */
+export interface LinkFlow {
+  credential: LinkCredential;
+  stage: "checking" | "ready" | "connecting" | "error";
+  preview?: LinkPreviewDto;
+  error?: string;
+}
+
 export interface State {
   status: "booting" | "ready" | "boot_failed";
+  /** Who this browser is: a guest, or connected to a Telegram account. */
+  account: AccountDto | null;
+  /** A handoff from Telegram in progress, if any. */
+  link: LinkFlow | null;
   /** The conversation, exactly as the server stored it. */
   messages: ChatMessageDto[];
   /** The desk as of the last server response. Never computed in the browser. */
@@ -44,6 +65,8 @@ export interface State {
 
 export const initialState: State = {
   status: "booting",
+  account: null,
+  link: null,
   messages: [],
   desk: null,
   turn: { kind: "idle" },
@@ -61,6 +84,15 @@ export const initialState: State = {
 export type Action =
   | { type: "booted"; bootstrap: Bootstrap }
   | { type: "boot_failed" }
+  /** The browser now opens a different workspace (connected to Telegram, or disconnected). */
+  | { type: "workspace_replaced"; bootstrap: Bootstrap }
+  /** Fresh server state while idle: something may have changed in Telegram. */
+  | { type: "refreshed"; bootstrap: Bootstrap }
+  | { type: "link_started"; credential: LinkCredential }
+  | { type: "link_previewed"; preview: LinkPreviewDto }
+  | { type: "link_connecting" }
+  | { type: "link_failed"; message: string }
+  | { type: "link_closed" }
   /** The user started a new conversation; `bootstrap` is the server's state afterwards. */
   | { type: "conversation_reset"; bootstrap: Bootstrap }
   | { type: "turn_started"; turn: Exclude<Turn, { kind: "idle" }>; outgoing?: Outgoing }
@@ -94,7 +126,72 @@ export function reducer(state: State, action: Action): State {
         status: "ready",
         messages: action.bootstrap.messages,
         desk: action.bootstrap.desk,
+        account: action.bootstrap.account,
       };
+
+    case "workspace_replaced":
+      // Everything on screen belonged to the workspace that was left.
+      return {
+        ...state,
+        status: "ready",
+        messages: action.bootstrap.messages,
+        desk: action.bootstrap.desk,
+        account: action.bootstrap.account,
+        outgoing: null,
+        failed: null,
+        notice: null,
+        filed: null,
+        receiptPreviews: {},
+        slipPreview: null,
+        highlight: { fields: [], key: state.highlight.key },
+        ledgerVersion: state.ledgerVersion + 1,
+      };
+
+    case "refreshed": {
+      // Never under a turn in progress: that turn's answer is the newer truth.
+      if (state.turn.kind !== "idle" || !state.desk) return state;
+      const { bootstrap } = action;
+      const signedOut = state.account?.kind === "telegram" && bootstrap.account.kind === "guest";
+      if (signedOut) {
+        return {
+          ...reducer(state, { type: "workspace_replaced", bootstrap }),
+          notice: "This browser was signed out from Telegram. Send /web to Expenso to continue here again.",
+        };
+      }
+      const unchanged =
+        lastId(bootstrap.messages) === lastId(state.messages) &&
+        bootstrap.messages.length === state.messages.length &&
+        JSON.stringify(bootstrap.desk) === JSON.stringify(state.desk);
+      if (unchanged) return state;
+      const fields = changedFields(state.desk.currentSlip, bootstrap.desk.currentSlip);
+      const clear = deskIsClear(bootstrap.desk);
+      return {
+        ...state,
+        messages: bootstrap.messages,
+        desk: bootstrap.desk,
+        account: bootstrap.account,
+        highlight: fields.length > 0 ? { fields, key: state.highlight.key + 1 } : state.highlight,
+        // A slip that left the desk elsewhere (submitted or discarded in Telegram) takes its photo along.
+        slipPreview: clear ? null : state.slipPreview,
+        filed: clear ? state.filed : null,
+        ledgerVersion: state.ledgerVersion + 1,
+      };
+    }
+
+    case "link_started":
+      return { ...state, link: { credential: action.credential, stage: "checking" } };
+
+    case "link_previewed":
+      return state.link ? { ...state, link: { ...state.link, stage: "ready", preview: action.preview } } : state;
+
+    case "link_connecting":
+      return state.link ? { ...state, link: { ...state.link, stage: "connecting" } } : state;
+
+    case "link_failed":
+      return state.link ? { ...state, link: { ...state.link, stage: "error", error: action.message } } : state;
+
+    case "link_closed":
+      return { ...state, link: null };
 
     case "boot_failed":
       return { ...state, status: "boot_failed" };
@@ -171,6 +268,7 @@ export function reducer(state: State, action: Action): State {
         ...state,
         messages: action.bootstrap?.messages ?? state.messages,
         desk: action.bootstrap?.desk ?? state.desk,
+        account: action.bootstrap?.account ?? state.account,
         turn: { kind: "idle" },
         outgoing: arrived ? null : state.outgoing,
         failed: arrived ? null : { message: action.message },

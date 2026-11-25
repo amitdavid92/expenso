@@ -1,7 +1,7 @@
 import type { Card, ChatMessageDto, ReceiptAnalysisDto } from "../../../../shared/contract";
 import { CATEGORY_LABEL, describeChange, money, month } from "../../lib/format";
 import { ErrorState } from "../ErrorState";
-import { AlertIcon, CheckIcon, DiscardIcon, EditIcon, SlipIcon } from "../Icons";
+import { AlertIcon, CheckIcon, DiscardIcon, EditIcon, PlaneIcon, SlipIcon } from "../Icons";
 import { SpendingSummary } from "../ledger/SpendingSummary";
 import { PolicyCheck } from "../policy/PolicyCheck";
 
@@ -152,13 +152,19 @@ export function Message({
           ) : (
             <span className="inline-flex items-center gap-1.5 rounded-lg border border-dashed border-line-strong px-3 py-2 text-sm text-ink-2">
               <SlipIcon width={16} height={16} />
-              Receipt photo · not kept
+              {message.via === "telegram" ? "Receipt photo · stayed in Telegram" : "Receipt photo · not kept"}
             </span>
           ))}
         {message.text && (
           <p className="max-w-[85%] rounded-2xl rounded-br-md bg-ink px-4 py-2.5 text-paper break-words whitespace-pre-wrap">
             {message.text}
           </p>
+        )}
+        {message.via === "telegram" && (
+          <span className="inline-flex items-center gap-1 text-xs text-ink-3">
+            <PlaneIcon width={12} height={12} />
+            via Telegram
+          </span>
         )}
       </div>
     );

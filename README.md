@@ -7,10 +7,8 @@ Home assignment for a Full Stack Engineer position. All expense data and company
 policies are fictional.
 
 > **Status:** work in progress. The backend, the AI assistant, receipt analysis, the web
-> app and the Telegram bot adapter are in place and run locally. The Telegram adapter is
-> covered by tests with a recorded Telegram; it has not yet been run against the real bot,
-> which needs a public HTTPS address. Still to come: cross-channel continuity (Phase 6),
-> public deployment and demo video (Phase 7).
+> app, the Telegram bot and the hand-off between them are in place and run locally (the bot
+> through a Cloudflare tunnel). Still to come: public deployment and demo video (Phase 7).
 
 ## The idea
 
@@ -314,6 +312,84 @@ Then message the bot: `/start`, a receipt photo, a correction, **Confirm and sub
 Run `npm run telegram -- delete` when done; the tunnel address stops working when
 `cloudflared` exits.
 
+## One conversation, two channels
+
+Start with a receipt photo in Telegram, press **Continue on web**, and the browser opens the
+same conversation, the same slip and the same ledger. Correct or submit it there; Telegram
+gets a short note, and the bot knows what happened.
+
+### How it works
+
+**The Telegram user is the account. A browser session is a key to it.** Nothing is merged
+or copied: the conversation, the draft, a half-read receipt and the expense history were
+already stored against one user row, and a connected browser simply opens that row. So every
+guarantee carries over unchanged: one draft per user, atomic and repeat-safe confirmation,
+stale-draft refusal, the policy re-check, and the per-user quota.
+
+- `web_sessions` maps a SHA-256 hash of each browser's cookie to an account. Several
+  browsers (a phone, a laptop) can open the same account.
+- `handoff_tokens` are one-time tickets that **only the bot issues**, for the Telegram user
+  who wrote to it. Each ticket is a 256-bit link token and an 8-character code.
+
+### The flow
+
+| Step | What happens |
+|---|---|
+| Telegram | A draft preview carries **Continue on web ↗**; `/web` sends a link and a code at any time |
+| Link | `https://<PUBLIC_WEB_URL>/#link=<token>`: the token is in the fragment, which browsers never send to a server, so it never appears in server or proxy logs. The app removes it from the address bar at once |
+| Confirm | The web shows *Continue as Dana?* and what will happen to any guest data in this browser. Nothing changes until the user presses Continue |
+| Redeem | One transaction marks the ticket used and creates a brand-new session. If anything fails, neither happens and the ticket still works |
+| Web | The same conversation, with Telegram messages marked "via Telegram"; receipt photos show as *stayed in Telegram* (images are never stored) |
+| Back | A confirm or discard on the web sends one Telegram note. The web re-reads the workspace when the tab regains focus, and every 20 seconds while connected |
+
+**Desktop without Telegram:** open the web app, choose **Telegram**, and type the code from
+`/web`. The code always travels from Telegram (where the user is already authenticated) to
+the user's own screen. A QR code scanned by the phone was rejected: an attacker could show
+a victim their own QR and take over the victim's account ("QRLjacking").
+
+### Security decisions
+
+- Tickets expire after 10 minutes and work once; two simultaneous redemptions cannot both win.
+- Link tokens are stored as SHA-256. Codes are short, so they are stored as **HMAC-SHA256
+  under a server key** (`LINK_CODE_KEY`, or the webhook secret), not a plain hash.
+- Wrong codes are limited to 10 per browser and 200 per day across the whole app, so
+  opening new guest sessions does not allow unlimited guessing.
+- Links are built only from the configured `PUBLIC_WEB_URL` (https, or http on localhost),
+  never from request headers. Without it, the bot offers the code only.
+- A browser connected to one Telegram account refuses a link for another: it must be
+  disconnected first. Identities are never switched or merged silently.
+- **Handoff links are bearer credentials**: anyone holding one before it is used, within 10
+  minutes, can open the account. The bot says so, sends them with link previews off, and
+  the confirmation card names the account. Don't forward them.
+- `/signout` in Telegram deletes every web session of the account and every unused ticket.
+- Tokens, codes, cookies and token-bearing URLs are never logged.
+- The Telegram note after a web confirmation is sent only when the expense actually changed
+  state, after it is stored. A failed note cannot affect the expense; a repeated press sends
+  nothing.
+
+### Guest workspaces
+
+A browser that was already used as a guest keeps that workspace. Before connecting it is
+shown what is there ("2 submitted expenses and a draft") and that it will **not** be added
+to the Telegram account. Its key is kept in a second HttpOnly cookie, and **Disconnect this
+browser** brings it back. Moving guest data into an account is deliberately not offered.
+
+### Using both channels at once
+
+Both channels write the same rows, so the database decides: the last correction wins and
+there is only ever one draft; confirming the same draft from both sides submits it once,
+and the other side is told it was already submitted; an old button for a replaced draft is
+refused. Two messages sent at the same moment from different channels are both answered,
+but each turn sees the history as it was when it started, so one reply may not know about
+the other message. A per-account lock was not worth its complexity here.
+
+### Trying it
+
+With the tunnel from the Telegram section running, add its address to `worker/.dev.vars`
+as `PUBLIC_WEB_URL=https://….trycloudflare.com`, restart `npm run dev:worker`, then send a
+receipt to the bot and press **Continue on web**. On a computer, open the tunnel address,
+choose **Telegram** in the top bar, and enter the code from `/web`.
+
 ## Known limitations
 
 - Dates are evaluated in UTC. Shortly after midnight in a timezone ahead of UTC,
@@ -333,6 +409,10 @@ Run `npm run telegram -- delete` when done; the tunnel address stops working whe
   receipt as structured data.
 - The Telegram bot answers with separate messages, not edits of earlier ones, so an old
   draft preview stays in the chat (without buttons once pressed) above the newer one.
+- The web does not get live pushes from Telegram; it refreshes on focus and every 20 seconds
+  while connected.
+- Each Telegram draft preview issues a fresh handoff ticket. Unused ones expire after 10
+  minutes and are cleaned up as new ones are issued.
 - A Telegram photo is read at the largest size Telegram offers under 4 MB. Images sent
   as files in other formats (HEIC, PDF) are refused with an explanation.
 - Anyone can open many anonymous sessions, which sidesteps the per-user limit. The

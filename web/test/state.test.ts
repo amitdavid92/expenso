@@ -126,7 +126,7 @@ describe("reducer", () => {
 
   it("offers a retry when a request got no answer and the server never saw it", () => {
     const state = ready({ messages: [message(1)], turn: sending, outgoing: { text: "hello" } });
-    const bootstrap: Bootstrap = { messages: [message(1)], desk: desk() };
+    const bootstrap: Bootstrap = { messages: [message(1)], desk: desk(), account: { kind: "guest" } };
 
     const lost = reducer(state, { type: "turn_lost", bootstrap, message: "No connection." });
 
@@ -136,7 +136,7 @@ describe("reducer", () => {
 
   it("does not offer a retry when the lost request turns out to have arrived", () => {
     const state = ready({ messages: [message(1)], turn: sending, outgoing: { text: "hello" } });
-    const bootstrap: Bootstrap = { messages: [message(1), message(2), message(3)], desk: desk({ currentSlip: expense() }) };
+    const bootstrap: Bootstrap = { messages: [message(1), message(2), message(3)], desk: desk({ currentSlip: expense() }), account: { kind: "guest" } };
 
     const lost = reducer(state, { type: "turn_lost", bootstrap, message: "No connection." });
 
@@ -156,13 +156,69 @@ describe("reducer", () => {
       desk: desk({ currentSlip: slip }),
     });
 
-    const reset = reducer(state, { type: "conversation_reset", bootstrap: { messages: [], desk: desk({ currentSlip: slip }) } });
+    const reset = reducer(state, { type: "conversation_reset", bootstrap: { messages: [], desk: desk({ currentSlip: slip }), account: { kind: "guest" } } });
 
     expect(reset.messages).toEqual([]);
     expect(reset.receiptPreviews).toEqual({});
     expect(reset.notice).toBeNull();
     expect(reset.failed).toBeNull();
     expect(reset.desk?.currentSlip?.id).toBe(9);
+  });
+
+  it("picks up changes made in Telegram when idle, highlighting what changed on the slip", () => {
+    const connected = { kind: "telegram" as const, name: "Dana", returnsToGuest: false };
+    const state = ready({ account: connected, messages: [message(1)], desk: desk({ currentSlip: expense({ id: 1 }) }) });
+
+    const next = reducer(state, {
+      type: "refreshed",
+      bootstrap: { messages: [message(1), message(2, { role: "user", via: "telegram" })], desk: desk({ currentSlip: expense({ id: 2, amountCents: 8200 }) }), account: connected },
+    });
+
+    expect(next.messages).toHaveLength(2);
+    expect(next.desk?.currentSlip?.amountCents).toBe(8200);
+    expect(next.highlight.fields).toEqual(["amount"]);
+  });
+
+  it("ignores a refresh while a turn is in flight, and returns the same state when nothing changed", () => {
+    const state = ready({ messages: [message(1)], account: { kind: "guest" } });
+    const bootstrap: Bootstrap = { messages: [message(1)], desk: desk(), account: { kind: "guest" } };
+
+    expect(reducer({ ...state, turn: sending }, { type: "refreshed", bootstrap: { ...bootstrap, messages: [] } }).messages).toHaveLength(1);
+    expect(reducer(state, { type: "refreshed", bootstrap })).toBe(state);
+  });
+
+  it("says so when Telegram signed this browser out", () => {
+    const state = ready({ account: { kind: "telegram", name: "Dana", returnsToGuest: false }, messages: [message(1)] });
+
+    const next = reducer(state, { type: "refreshed", bootstrap: { messages: [], desk: desk(), account: { kind: "guest" } } });
+
+    expect(next.account).toEqual({ kind: "guest" });
+    expect(next.messages).toEqual([]);
+    expect(next.notice).toMatch(/signed out from Telegram/);
+  });
+
+  it("drops everything from the old workspace when the browser switches", () => {
+    const state = ready({ messages: [message(1)], receiptPreviews: { 1: "blob:x" }, slipPreview: "blob:x", filed: expense() });
+
+    const next = reducer(state, { type: "workspace_replaced", bootstrap: { messages: [message(9)], desk: desk(), account: { kind: "telegram", name: null, returnsToGuest: true } } });
+
+    expect(next.messages.map((m) => m.id)).toEqual([9]);
+    expect(next.receiptPreviews).toEqual({});
+    expect(next.slipPreview).toBeNull();
+    expect(next.filed).toBeNull();
+    expect(next.account).toMatchObject({ kind: "telegram", returnsToGuest: true });
+  });
+
+  it("walks a link through checking, ready, connecting and closed", () => {
+    let state = reducer(ready(), { type: "link_started", credential: { token: "t" } });
+    expect(state.link?.stage).toBe("checking");
+    state = reducer(state, { type: "link_previewed", preview: { name: "Dana", sameAccount: false, guest: null } });
+    expect(state.link).toMatchObject({ stage: "ready", preview: { name: "Dana" } });
+    state = reducer(state, { type: "link_connecting" });
+    expect(state.link?.stage).toBe("connecting");
+    state = reducer(state, { type: "link_failed", message: "That link was already used." });
+    expect(state.link).toMatchObject({ stage: "error", error: "That link was already used." });
+    expect(reducer(state, { type: "link_closed" }).link).toBeNull();
   });
 
   it("gives each composer seed a new key so the same text can be seeded twice", () => {

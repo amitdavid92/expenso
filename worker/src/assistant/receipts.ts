@@ -6,7 +6,7 @@ import { toCents } from "../lib/money";
 import { appendMessage } from "../services/conversations";
 import { MAX_AMOUNT_CENTS, createDraft, getActiveDraft } from "../services/expenses";
 import { CATEGORIES, type Category, POLICY } from "../services/policy";
-import { finish } from "./assistant";
+import { finish, userMeta } from "./assistant";
 import { describeReceiptFields, draftNotice } from "./format";
 import { ERROR_TEXT, TurnFailure, createModelCaller } from "./model-caller";
 import { getPendingReceipt, savePendingReceipt } from "./pending-receipts";
@@ -311,7 +311,7 @@ export async function handleReceipt(
 
   const caption = (input.caption ?? "").replace(/\s+/g, " ").trim().slice(0, MAX_CAPTION_LENGTH);
   // The conversation records that a photo was sent, never the photo itself.
-  const photo: MessageMeta = { attachment: "receipt_photo" };
+  const photo: MessageMeta = userMeta(deps, { attachment: "receipt_photo" });
   await appendMessage(deps.db, userId, "user", caption ? `${PLACEHOLDER} ${caption}` : PLACEHOLDER, photo);
 
   const now = (deps.now ?? (() => new Date()))();
@@ -394,7 +394,7 @@ export async function resolvePendingCurrency(
     };
   }
 
-  await appendMessage(deps.db, userId, "user", `The amount is in ${currency}.`);
+  await appendMessage(deps.db, userId, "user", `The amount is in ${currency}.`, userMeta(deps));
   const now = (deps.now ?? (() => new Date()))();
   return respond(deps, userId, await settle(deps, userId, { ...pending.fields, currency }, null, now));
 }
