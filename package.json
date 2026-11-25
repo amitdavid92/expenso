@@ -15,6 +15,7 @@
     "test": "npm run test --workspaces",
     "typecheck": "npm run typecheck --workspaces",
     "db:migrate:local": "npm run db:migrate:local -w worker",
-    "chat": "npm run chat -w worker --"
+    "chat": "npm run chat -w worker --",
+    "telegram": "npm run telegram -w worker --"
   }
 }

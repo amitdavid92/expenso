@@ -1,4 +1,6 @@
 import { Hono } from "hono";
+import { type TelegramOptions, telegramRoutes } from "./adapters/telegram";
+import { createTelegramApi } from "./adapters/telegram-api";
 import { webRoutes } from "./adapters/web";
 import { assistantConfigFromEnv } from "./assistant/config";
 import type { AssistantDeps } from "./assistant/types";
@@ -14,11 +16,20 @@ function productionDeps(env: Env): AssistantDeps {
   };
 }
 
+/** The real Telegram wiring: the bot token and webhook secret from the Worker's secrets. */
+const productionTelegram: TelegramOptions = {
+  makeApi: (env) => createTelegramApi({ token: env.TELEGRAM_BOT_TOKEN }),
+  secret: (env) => env.TELEGRAM_WEBHOOK_SECRET,
+};
+
 /**
- * Builds the Worker's HTTP app. `makeDeps` exists so tests can run the real
- * routes against a scripted model instead of Gemini.
+ * Builds the Worker's HTTP app. `makeDeps` and `telegram` exist so tests can
+ * run the real routes against a scripted model and a recorded Telegram instead
+ * of the real services.
  */
-export function createApp(options: { makeDeps?: (env: Env) => AssistantDeps } = {}) {
+export function createApp(
+  options: { makeDeps?: (env: Env) => AssistantDeps; telegram?: TelegramOptions } = {},
+) {
   const app = new Hono<{ Bindings: Env }>();
 
   /** Liveness check. Also proves the D1 binding is reachable. */
@@ -31,7 +42,10 @@ export function createApp(options: { makeDeps?: (env: Env) => AssistantDeps } = 
     }
   });
 
-  app.route("/api", webRoutes(options.makeDeps ?? productionDeps));
+  // Two channels, one assistant: both adapters are given the same dependencies.
+  const makeDeps = options.makeDeps ?? productionDeps;
+  app.route("/api", webRoutes(makeDeps));
+  app.route("/webhooks/telegram", telegramRoutes(makeDeps, options.telegram ?? productionTelegram));
 
   app.notFound((c) => c.json({ error: { code: "not_found", message: "Route not found" } }, 404));
 

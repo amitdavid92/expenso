@@ -6,9 +6,11 @@ describe an expense, correct it in conversation, and submit it with an explicit 
 Home assignment for a Full Stack Engineer position. All expense data and company
 policies are fictional.
 
-> **Status:** work in progress. The backend, the AI assistant, receipt analysis and the
-> web app are in place and run locally. Still to come: Telegram with photos (Phase 5),
-> cross-channel continuity (Phase 6), public deployment and demo video (Phase 7).
+> **Status:** work in progress. The backend, the AI assistant, receipt analysis, the web
+> app and the Telegram bot adapter are in place and run locally. The Telegram adapter is
+> covered by tests with a recorded Telegram; it has not yet been run against the real bot,
+> which needs a public HTTPS address. Still to come: cross-channel continuity (Phase 6),
+> public deployment and demo video (Phase 7).
 
 ## The idea
 
@@ -99,11 +101,12 @@ shared/contract.ts   API types used by both the worker and the web app
 worker/
   migrations/        D1 schema
   src/index.ts       Hono app
-  src/adapters/      web.ts: sessions, routes, mapping to the contract
+  src/adapters/      web.ts (sessions, routes) and telegram.ts (webhook, buttons, photos);
+                     present.ts maps stored messages to the cards both of them render
   src/assistant/     the channel-independent assistant: chat, receipts, tools, prompt
   src/llm/           LlmClient interface and the Gemini implementation
   src/services/      deterministic business logic: policy, expenses, users, conversations, limits
-  scripts/chat.ts    terminal chat
+  scripts/           chat.ts (terminal chat), telegram-webhook.ts (register the bot's webhook)
   samples/           fictional receipt images
 web/
   src/components/    slip, policy (limit ruler), ledger, conversation, shell
@@ -251,6 +254,66 @@ Screenshots from before and after the visual refinement pass are in `docs/screen
 
 The Telegram entry in the top bar only explains what is coming. Nothing is connected yet.
 
+## Telegram
+
+The bot ([@GetExpensoBot](https://t.me/GetExpensoBot)) is a second adapter over the same
+assistant: `worker/src/adapters/telegram.ts` calls the same `handleMessage`,
+`handleReceipt`, `confirmDraftById` and `cancelDraftById` as the web routes, and
+renders the same typed cards as short Telegram messages.
+
+What it does:
+
+- Text messages with context, receipt photos (and JPEG/PNG images sent as files) with an
+  optional caption, `/start`, `/help`, `/confirm`, `/cancel`.
+- A draft arrives as a preview with the policy margin in exact dollars ("$33.00 under the
+  $75.00 Meals limit") and two inline buttons, **Confirm and submit** and **Discard**.
+- The buttons carry that draft's id. A button from before a correction is refused, a
+  second press submits nothing twice, and the services check the draft belongs to whoever
+  pressed. Typing `confirm` or `cancel` works too.
+- "typing…" is shown while the model works. Unsupported files, oversized files, rate
+  limits, provider failures and timeouts each get a short plain answer.
+
+How it is protected:
+
+- Every request must carry the webhook secret in `X-Telegram-Bot-Api-Secret-Token`; with
+  no secret configured the route refuses everything.
+- Private chats only. Messages and button presses in groups are ignored.
+- Each `update_id` is processed once, so Telegram's redeliveries do nothing.
+- The route answers 200 at once and works in the background. The whole update gets 26
+  seconds, inside Cloudflare's 30-second window, leaving time to say it took too long.
+- Telegram puts the bot token in every URL, including file downloads. No URL is ever
+  logged or put in an error; logs carry a method name, a kind and a status only.
+- A Telegram user and a web session are separate users. Linking them is Phase 6.
+
+### Connecting the bot
+
+Telegram delivers only to a public HTTPS address, so this needs a deployed Worker (Phase 7)
+or a tunnel to your machine.
+
+```bash
+npm run telegram -- info       # which bot the token belongs to, and its current webhook
+npm run telegram -- secret     # prints a new random secret; add it to worker/.dev.vars
+npm run telegram -- set https://<public-address>
+npm run telegram -- delete     # stop deliveries
+```
+
+The token and secret are read from `worker/.dev.vars` and never printed. The Worker that
+receives the webhook must have the same `TELEGRAM_WEBHOOK_SECRET` (`wrangler secret put`
+in production).
+
+To try it against your local Worker without deploying, a free quick tunnel works:
+
+```bash
+npm run telegram -- secret                      # once; paste the line into worker/.dev.vars
+npm run build && npm run dev:worker             # restart so the secret is loaded
+cloudflared tunnel --url http://localhost:8787  # prints an https://….trycloudflare.com address
+npm run telegram -- set https://….trycloudflare.com
+```
+
+Then message the bot: `/start`, a receipt photo, a correction, **Confirm and submit**.
+Run `npm run telegram -- delete` when done; the tunnel address stops working when
+`cloudflared` exits.
+
 ## Known limitations
 
 - Dates are evaluated in UTC. Shortly after midnight in a timezone ahead of UTC,
@@ -268,6 +331,10 @@ The Telegram entry in the top bar only explains what is coming. Nothing is conne
   It is a backstop to the prompt, not a guarantee.
 - The model sees the last 20 messages as text, plus the current draft and any pending
   receipt as structured data.
+- The Telegram bot answers with separate messages, not edits of earlier ones, so an old
+  draft preview stays in the chat (without buttons once pressed) above the newer one.
+- A Telegram photo is read at the largest size Telegram offers under 4 MB. Images sent
+  as files in other formats (HEIC, PDF) are refused with an explanation.
 - Anyone can open many anonymous sessions, which sidesteps the per-user limit. The
   application-wide daily and per-minute limits still hold.
 - `wrangler` 4 and `@cloudflare/vitest-plugin` currently ship a beta build of Miniflare

@@ -9,7 +9,8 @@
     "typecheck": "wrangler types && tsc --noEmit",
     "test": "wrangler types && vitest run",
     "db:migrate:local": "wrangler d1 migrations apply expenso --local",
-    "chat": "tsx scripts/chat.ts"
+    "chat": "tsx scripts/chat.ts",
+    "telegram": "tsx scripts/telegram-webhook.ts"
   },
   "dependencies": {
     "hono": "^4.13.21"
