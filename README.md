@@ -232,6 +232,8 @@ the ledger cannot disagree. All figures come from the database; the browser tota
 
 ### Design
 
+Screenshots from before and after the visual refinement pass are in `docs/screenshots/`.
+
 - **One pinned slip** instead of a card per message. A correction changes the slip in
   place and adds one line to the conversation ("Amount changed $48.50 → $52.00").
 - **Draft, submitted and policy are three separate signals.** A draft has a dashed,

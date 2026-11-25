@@ -156,7 +156,7 @@ export function Message({
             </span>
           ))}
         {message.text && (
-          <p className="max-w-[85%] rounded-2xl rounded-br-md bg-desk-deep px-3.5 py-2 text-ink break-words whitespace-pre-wrap">
+          <p className="max-w-[85%] rounded-2xl rounded-br-md bg-ink px-4 py-2.5 text-paper break-words whitespace-pre-wrap">
             {message.text}
           </p>
         )}
@@ -176,13 +176,22 @@ export function Message({
   }
 
   return (
-    <div className="animate-settle space-y-2.5">
-      {message.text && (
-        <div className="max-w-[62ch] space-y-2 text-ink">
-          <Paragraphs text={message.text} />
-        </div>
-      )}
-      {message.card && <CardView card={message.card} />}
+    <div className="flex animate-settle gap-3">
+      <span
+        className="mt-0.5 grid size-6 shrink-0 place-items-center rounded-md bg-indigo text-2xs leading-none font-bold text-white"
+        aria-hidden="true"
+      >
+        e.
+      </span>
+      <div className="min-w-0 flex-1 space-y-2.5">
+        <span className="sr-only">Expenso:</span>
+        {message.text && (
+          <div className="max-w-[62ch] space-y-2 text-ink">
+            <Paragraphs text={message.text} />
+          </div>
+        )}
+        {message.card && <CardView card={message.card} />}
+      </div>
     </div>
   );
 }

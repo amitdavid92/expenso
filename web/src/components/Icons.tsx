@@ -92,6 +92,32 @@ export const PlaneIcon = (p: Props) => (
   </Icon>
 );
 
+export const CameraIcon = (p: Props) => (
+  <Icon {...p}>
+    <path d="M3 7.2A1.7 1.7 0 0 1 4.7 5.5h1.6l1.2-1.8h5l1.2 1.8h1.6A1.7 1.7 0 0 1 17 7.2v7.1a1.7 1.7 0 0 1-1.7 1.7H4.7A1.7 1.7 0 0 1 3 14.3V7.2Z" />
+    <circle cx="10" cy="10.6" r="2.9" />
+  </Icon>
+);
+
+export const ShieldIcon = (p: Props) => (
+  <Icon {...p}>
+    <path d="M10 2.8 4 5v4.6c0 3.6 2.4 6.3 6 7.6 3.6-1.3 6-4 6-7.6V5l-6-2.2Z" />
+    <path d="m7.4 9.9 1.9 1.9 3.4-3.7" />
+  </Icon>
+);
+
+export const BarsIcon = (p: Props) => (
+  <Icon {...p}>
+    <path d="M3.5 16.5h13M6 16.5v-5M10 16.5v-10M14 16.5V9" />
+  </Icon>
+);
+
+export const ArrowIcon = (p: Props) => (
+  <Icon {...p}>
+    <path d="M4.5 10h11M11 5.5l4.5 4.5-4.5 4.5" />
+  </Icon>
+);
+
 export const NewIcon = (p: Props) => (
   <Icon {...p}>
     <path d="M10 4.5v11M4.5 10h11" />

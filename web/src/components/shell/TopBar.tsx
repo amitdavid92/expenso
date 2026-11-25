@@ -1,7 +1,7 @@
 import { useEffect, useRef, useState } from "react";
 import type { Route } from "../../state/hooks";
 import { isBusy, useExpenso } from "../../state/store";
-import { NewIcon, PlaneIcon, SlipIcon } from "../Icons";
+import { NewIcon, PlaneIcon } from "../Icons";
 
 const TABS: { route: Route; label: string }[] = [
   { route: "assistant", label: "Assistant" },
@@ -38,10 +38,11 @@ export function TelegramEntry() {
         onClick={() => setOpen((value) => !value)}
         aria-expanded={open}
         aria-controls="telegram-panel"
-        className="inline-flex min-h-10 items-center gap-1.5 rounded-lg px-2.5 text-sm text-ink-2 transition-colors hover:bg-desk hover:text-ink"
+        className="inline-flex min-h-10 items-center gap-1.5 rounded-lg border border-line px-2.5 text-sm text-ink transition-colors hover:border-line-strong hover:bg-desk"
       >
         <PlaneIcon width={17} height={17} />
         <span className="hidden sm:inline">Telegram</span>
+        <span className="hidden rounded bg-desk-deep px-1.5 py-0.5 text-2xs font-medium text-ink-2 lg:inline">Soon</span>
       </button>
       {open && (
         <div
@@ -104,8 +105,8 @@ export function NewConversation() {
         className="inline-flex min-h-10 items-center gap-1.5 rounded-lg px-2.5 text-sm text-ink-2 transition-colors hover:bg-desk hover:text-ink disabled:opacity-50"
       >
         <NewIcon width={17} height={17} />
-        <span className="hidden sm:inline">New conversation</span>
-        <span className="sr-only sm:hidden">New conversation</span>
+        <span className="hidden whitespace-nowrap lg:inline">New conversation</span>
+        <span className="sr-only lg:hidden">New conversation</span>
       </button>
       {asking && (
         <div
@@ -149,13 +150,16 @@ export function NewConversation() {
 export function TopBar({ route }: { route: Route }) {
   const active = route === "desk" ? "assistant" : route;
   return (
-    <header className="sticky top-0 z-10 border-b border-line bg-paper">
+    <header className="sticky top-0 z-10 border-b border-line bg-paper/95 backdrop-blur-sm">
       <div className="mx-auto flex h-14 max-w-[90rem] items-center gap-3 px-4 sm:px-6">
         <a href="#/assistant" className="flex items-center gap-2 rounded-md pr-2 font-medium tracking-tight text-ink">
-          <span className="grid size-7 place-items-center rounded-md bg-indigo text-white">
-            <SlipIcon width={17} height={17} strokeWidth={1.8} />
+          {/* The full stop is the mark: the same one that ends "Snap. Chat. Submit." */}
+          <span className="grid size-8 place-items-center rounded-[9px] bg-indigo text-[1.0625rem] leading-none font-bold tracking-tight text-white" aria-hidden="true">
+            e.
           </span>
-          <span className="text-[1.0625rem]">Expenso</span>
+          <span className="text-[1.1875rem] font-bold tracking-[-0.03em]">
+            expenso<span className="text-indigo">.</span>
+          </span>
         </a>
 
         <nav aria-label="Main" className="ml-3 hidden items-center gap-1 desk:flex">
@@ -165,7 +169,7 @@ export function TopBar({ route }: { route: Route }) {
               href={`#/${tab.route}`}
               aria-current={active === tab.route ? "page" : undefined}
               className={`inline-flex min-h-10 items-center rounded-lg px-3 text-sm transition-colors ${
-                active === tab.route ? "bg-indigo-wash font-medium text-indigo-deep" : "text-ink-2 hover:bg-desk hover:text-ink"
+                active === tab.route ? "bg-indigo-wash font-semibold text-indigo-deep" : "text-ink-2 hover:bg-desk hover:text-ink"
               }`}
             >
               {tab.label}
@@ -177,10 +181,10 @@ export function TopBar({ route }: { route: Route }) {
           <NewConversation />
           <TelegramEntry />
           <span
-            className="rounded-md border border-line px-2 py-1 text-xs text-ink-2"
+            className="rounded-md border border-line px-2 py-1 text-xs whitespace-nowrap text-ink-2"
             title="This is a demo. The expenses, receipts and company policy are fictional. Do not upload real receipts."
           >
-            Demo <span className="hidden text-ink-3 sm:inline">· fictional data</span>
+            Demo <span className="hidden text-ink-3 lg:inline">· fictional data</span>
           </span>
         </div>
       </div>

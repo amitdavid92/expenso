@@ -41,8 +41,8 @@ function TryIt() {
   }, [category, amount, valid]);
 
   return (
-    <section aria-labelledby="try-title" className="mt-8">
-      <h2 id="try-title" className="text-lg font-medium">
+    <section aria-labelledby="try-title" className="rounded-2xl border border-line bg-paper p-5 shadow-(--shadow-lift) sm:p-6">
+      <h2 id="try-title" className="text-lg font-semibold">
         Before you spend
       </h2>
       <p className="mt-1 max-w-[60ch] text-ink-2">
@@ -84,7 +84,7 @@ function TryIt() {
         ) : failed ? (
           <ErrorState>The check could not be run. Try again in a moment.</ErrorState>
         ) : check ? (
-          <PolicyCheck check={check} />
+          <PolicyCheck check={check} bare />
         ) : (
           <div className="skeleton h-24 max-w-md" />
         )}
@@ -111,16 +111,17 @@ export function PolicyView() {
   }, [attempt]);
 
   return (
-    <main className="mx-auto w-full max-w-4xl flex-1 px-4 py-8 sm:px-8">
-      <h1 className="text-2xl font-medium tracking-tight">Company policy</h1>
+    <main className="mx-auto w-full max-w-5xl flex-1 px-4 py-8 sm:px-8">
+      <h1 className="text-[1.75rem] font-semibold tracking-tight">Company policy</h1>
       <p className="mt-1 max-w-[60ch] text-ink-2">
         A fictional policy for this demo. It is applied by code on the server, never by the AI assistant.
       </p>
 
+      <div className="mt-7 grid items-start gap-x-12 gap-y-10 lg:grid-cols-[minmax(0,1fr)_minmax(0,22rem)]">
       <TryIt />
 
-      <section aria-labelledby="limits-title" className="mt-10">
-        <h2 id="limits-title" className="text-lg font-medium">
+      <section aria-labelledby="limits-title">
+        <h2 id="limits-title" className="text-lg font-semibold">
           Limits per expense
         </h2>
 
@@ -151,7 +152,7 @@ export function PolicyView() {
               </tbody>
             </table>
 
-            <h2 className="mt-10 text-lg font-medium">Rules</h2>
+            <h2 className="mt-9 text-lg font-semibold">Rules</h2>
             <ul className="mt-3 max-w-[65ch] space-y-2 text-ink-2">
               {policy.rules.map((rule) => (
                 <li key={rule} className="flex gap-2.5">
@@ -163,6 +164,7 @@ export function PolicyView() {
           </>
         )}
       </section>
+      </div>
     </main>
   );
 }

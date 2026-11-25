@@ -39,17 +39,21 @@ Green, amber and red never appear without words next to them.
 
 ## Type
 
-- **Geist** (variable, self-hosted) for all interface text. One family; weight 400 and 500.
+- **Geist** (variable, self-hosted) for all interface text. One family; 400 for text, 500
+  for controls, 600 for headings, 700 for the wordmark.
 - **Geist Mono** for money (`.figure`, tabular figures) and for the ink stamp, which is a
   printed mark. Dates, slip numbers and timers use the sans with `tabular-nums`.
 - Fixed rem scale: 11, 12, 13, 15 (body), 17, 20, 24, 32. The slip amount is 32px and is
-  the largest thing on the desk; the welcome heading is 40px.
+  the largest thing on the desk; the welcome heading is 52px (40px on phones).
 - Prose is capped at 62ch.
 
 ## Shape and depth
 
 - Radius: 10px slips, 8px buttons and inputs, 16px the composer.
-- 1px hairline borders. No shadows, except the Telegram popover, which floats over content.
+- 1px hairline borders. Depth is used for two things only: paper lying on the desk
+  (`--shadow-slip`, on slips and the sample receipt) and a control or panel lifting
+  (`--shadow-lift`: the composer, hero button, popovers, summary panels).
+- The conversation pane is white paper; the desk beside it is the tinted ground.
 - Cards exist only where the content is a discrete object (a slip, a policy check, a
   summary). No card inside a card.
 
@@ -82,6 +86,19 @@ its new backend value. All of it is disabled under `prefers-reduced-motion`.
   side; navigation in the top bar.
 - Below that: one pane at a time, with a bottom tab bar (Assistant, Desk, Expenses,
   Policy). A compact bar above the composer keeps a pending slip and its Confirm in reach.
+
+## Brand
+
+The mark is the full stop: an indigo square holding "e.", beside the lowercase wordmark
+"expenso." with its stop in indigo. It is the same stop that ends "Snap. Chat. Submit."
+The assistant signs its lines in the conversation with the small mark.
+
+## First screen
+
+Scanning a receipt is the hero: one indigo-wash panel with the primary action ("Scan a
+receipt"), "Try the sample", and the real sample receipt image, tilted, which is itself a
+button. Three secondary ways in follow as tiles, each a real question that sends on click.
+The layout responds to the width of the conversation pane (container queries), not the window.
 
 ## Voice
 

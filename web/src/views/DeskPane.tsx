@@ -67,7 +67,7 @@ export function DeskPane() {
   return (
     <div className="space-y-9">
       <div>
-        <h2 className="mb-3 text-sm font-medium text-ink">Current slip</h2>
+        <h2 className="mb-3 text-sm font-semibold text-ink">Your expense slip</h2>
         {/* Announces what the slip is now, for people who cannot see it change. */}
         <p className="sr-only" role="status">
           {turn.kind === "reading_receipt"

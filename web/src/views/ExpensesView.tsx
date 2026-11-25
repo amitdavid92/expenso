@@ -3,7 +3,8 @@ import { CATEGORIES, type Category, type ExpenseDto, type ExpenseStatus } from "
 import * as api from "../api/client";
 import { ErrorState } from "../components/ErrorState";
 import { Select } from "../components/Select";
-import { CATEGORY_LABEL, day, money } from "../lib/format";
+import { SpendingSummary } from "../components/ledger/SpendingSummary";
+import { CATEGORY_LABEL, day, money, month } from "../lib/format";
 import { useExpenso } from "../state/store";
 
 const STATUSES: { value: ExpenseStatus; label: string }[] = [
@@ -42,8 +43,36 @@ export function ExpensesView() {
 
   return (
     <main className="mx-auto w-full max-w-4xl flex-1 px-4 py-8 sm:px-8">
-      <h1 className="text-2xl font-medium tracking-tight">Expenses</h1>
+      <h1 className="text-[1.75rem] font-semibold tracking-tight">Expenses</h1>
       <p className="mt-1 text-ink-2">Submitted means sent for processing. It does not mean approved or reimbursed.</p>
+
+      {/* The same backend figures the ledger shows; nothing here is computed in the browser. */}
+      {state.desk && (
+        <section
+          aria-label={`Submitted in ${month(state.desk.month.from)}`}
+          className="mt-6 grid gap-x-10 gap-y-5 rounded-2xl border border-line bg-paper p-5 shadow-(--shadow-lift) sm:grid-cols-[auto_minmax(0,1fr)] sm:p-6"
+        >
+          <div>
+            <p className="text-sm text-ink-2">Submitted in {month(state.desk.month.from)}</p>
+            <p className="figure mt-1 text-[2rem] leading-none font-medium">{money(state.desk.month.summary.totalCents)}</p>
+            <p className="mt-2.5 text-sm text-ink-2">
+              {state.desk.month.summary.count} {state.desk.month.summary.count === 1 ? "expense" : "expenses"}
+              {state.desk.month.summary.needsReviewCount > 0 && (
+                <span className="text-review"> · {state.desk.month.summary.needsReviewCount} in manual review</span>
+              )}
+            </p>
+          </div>
+          <div className="self-center">
+            {state.desk.month.summary.count > 0 ? (
+              <SpendingSummary summary={{ ...state.desk.month.summary, needsReviewCount: 0 }} />
+            ) : (
+              <p className="max-w-[44ch] text-sm text-ink-2">
+                Nothing submitted this month yet. The split by category appears here once you confirm a slip.
+              </p>
+            )}
+          </div>
+        </section>
+      )}
 
       <div className="mt-6 flex flex-wrap items-center gap-3">
         <div role="group" aria-label="Status" className="inline-flex rounded-lg border border-line-strong bg-paper p-0.5">
@@ -100,7 +129,7 @@ export function ExpensesView() {
         )}
 
         {loaded.state === "ready" && loaded.expenses.length > 0 && (
-          <div className="overflow-x-auto rounded-lg border border-line bg-paper">
+          <div className="overflow-x-auto rounded-xl border border-line bg-paper">
             <table className="w-full min-w-[34rem] text-left text-sm">
               <thead>
                 <tr className="border-b border-line text-ink-2">

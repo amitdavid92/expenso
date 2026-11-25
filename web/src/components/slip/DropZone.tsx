@@ -58,8 +58,7 @@ export function DropZone({
       className={`slip slip-draft transition-colors ${over ? "border-indigo bg-indigo-wash" : ""}`}
     >
       <div className="flex items-center justify-between gap-3 border-b border-line px-5 py-2.5 text-sm">
-        <h3 className="font-medium text-ink">{over ? "Drop it on the slip" : "Blank slip"}</h3>
-        <span className="text-ink-3">Drop a receipt here</span>
+        <h3 className="font-semibold text-ink">{over ? "Drop it on the slip" : "Ready for your receipt"}</h3>
       </div>
 
       <div className="space-y-3.5 px-5 pt-5 pb-5">
@@ -81,7 +80,8 @@ export function DropZone({
       </div>
 
       <div className="px-5 pt-1 pb-4">
-        <div className="flex flex-wrap gap-2.5">
+        <p className="hidden py-2 text-center text-sm font-medium text-ink-2 desk:block">Drop your receipt here</p>
+        <div className="flex flex-wrap gap-2.5 desk:hidden">
           <SlipButton primary onClick={() => input.current?.click()} disabled={disabled}>
             Choose a photo
           </SlipButton>
@@ -90,8 +90,8 @@ export function DropZone({
           </SlipButton>
         </div>
         <p className="mt-2.5 text-xs text-ink-3">
-          Or describe an expense in the conversation. JPEG or PNG; a photo is read once and not stored. This is a demo
-          with fictional data: please don't upload real receipts.
+          JPEG or PNG. A photo is read once and never stored. Demo with fictional data: please don't upload real
+          receipts.
         </p>
 
         <input

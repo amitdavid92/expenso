@@ -29,9 +29,9 @@ export function Ledger({ desk, freshId }: { desk: DeskState; freshId: number | n
   const total = useCountUp(summary.totalCents);
 
   return (
-    <section aria-labelledby="ledger-title">
+    <section aria-labelledby="ledger-title" className="rounded-xl border border-line bg-paper p-5">
       <div className="flex items-baseline justify-between gap-3">
-        <h2 id="ledger-title" className="text-sm font-medium text-ink">
+        <h2 id="ledger-title" className="text-sm font-semibold text-ink">
           Ledger
         </h2>
         <a href="#/expenses" className="text-sm text-ink-2 underline decoration-line-strong underline-offset-4 hover:text-ink">
@@ -40,23 +40,23 @@ export function Ledger({ desk, freshId }: { desk: DeskState; freshId: number | n
       </div>
 
       {desk.recent.length === 0 ? (
-        <p className="mt-3 max-w-[40ch] text-sm text-ink-2">
-          Nothing submitted yet. Each slip you confirm is filed here, with a running total for the month.
-        </p>
+        <>
+          <p className="mt-4 text-sm text-ink-2">Submitted in {month(from)}</p>
+          <p className="figure mt-0.5 text-[1.75rem] leading-tight font-medium text-ink">{money(total)}</p>
+          <p className="mt-1.5 text-sm text-ink-2">Each slip you confirm is filed here.</p>
+        </>
       ) : (
         <>
-          <div className="mt-3 flex items-baseline justify-between gap-3 border-t border-line pt-3">
-            <span className="text-sm text-ink-2">Submitted in {month(from)}</span>
-            <span className="figure text-xl font-medium" aria-live="polite">
-              {money(total)}
-            </span>
-          </div>
-          <div className="mt-3">
+          <p className="mt-4 text-sm text-ink-2">Submitted in {month(from)}</p>
+          <p className="figure mt-0.5 text-[1.75rem] leading-tight font-medium text-ink" aria-live="polite">
+            {money(total)}
+          </p>
+          <div className="mt-4">
             <SpendingSummary summary={summary} />
           </div>
 
-          <h3 className="mt-6 text-sm font-medium text-ink">Latest</h3>
-          <ul className="mt-1 divide-y divide-line border-y border-line">
+          <h3 className="mt-6 text-sm font-semibold text-ink">Latest</h3>
+          <ul className="mt-1 divide-y divide-line border-t border-line">
             {desk.recent.map((expense) => (
               <LedgerRow key={expense.id} expense={expense} fresh={expense.id === freshId} />
             ))}

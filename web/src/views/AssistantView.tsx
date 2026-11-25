@@ -104,7 +104,7 @@ export function AssistantView({ show }: { show: "conversation" | "desk" }) {
       onDrop={onDrop}
     >
       <main
-        className={`min-h-0 min-w-0 flex-col ${show === "conversation" ? "flex" : "hidden desk:flex"} ${dragging ? "bg-indigo-wash/50" : ""}`}
+        className={`min-h-0 min-w-0 flex-col ${show === "conversation" ? "flex" : "hidden desk:flex"} ${dragging ? "bg-indigo-wash/60" : "bg-paper"}`}
       >
         <div className="min-h-0 flex-1 overflow-y-auto px-4 sm:px-8">
           {isNew ? (
@@ -140,7 +140,7 @@ export function AssistantView({ show }: { show: "conversation" | "desk" }) {
 
       <aside
         aria-label="Desk"
-        className={`min-h-0 overflow-y-auto border-line bg-desk-deep/45 px-4 py-6 sm:px-6 desk:border-l ${show === "desk" ? "block" : "hidden desk:block"}`}
+        className={`min-h-0 overflow-y-auto border-line bg-desk px-4 py-6 sm:px-6 desk:border-l ${show === "desk" ? "block" : "hidden desk:block"}`}
       >
         <div className="mx-auto max-w-md">
           <DeskPane />

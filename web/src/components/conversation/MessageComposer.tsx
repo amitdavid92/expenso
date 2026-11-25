@@ -67,7 +67,7 @@ export function MessageComposer({
   return (
     <form
       onSubmit={submit}
-      className="flex items-end gap-1 rounded-2xl border border-line-strong bg-paper p-1.5 transition-colors focus-within:border-indigo"
+      className="flex items-end gap-1 rounded-2xl border border-line-strong bg-paper p-1.5 shadow-(--shadow-lift) transition-colors focus-within:border-indigo"
     >
       <button
         type="button"

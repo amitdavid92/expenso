@@ -51,7 +51,7 @@ export function Conversation({ state, onRetry }: { state: State; onRetry: () => 
   }, [count, outgoing, turn.kind, failed]);
 
   return (
-    <div role="log" aria-live="polite" aria-label="Conversation" className="mx-auto w-full max-w-2xl space-y-5 py-6">
+    <div role="log" aria-live="polite" aria-label="Conversation" className="mx-auto w-full max-w-2xl space-y-6 py-7">
       {messages.map((message, i) => (
         <Message
           key={message.id}
@@ -72,7 +72,7 @@ export function Conversation({ state, onRetry }: { state: State; onRetry: () => 
             />
           )}
           {outgoing.text && (
-            <p className="max-w-[85%] rounded-2xl rounded-br-md bg-desk-deep px-3.5 py-2 break-words whitespace-pre-wrap">
+            <p className="max-w-[85%] rounded-2xl rounded-br-md bg-ink px-4 py-2.5 text-paper break-words whitespace-pre-wrap">
               {outgoing.text}
             </p>
           )}
