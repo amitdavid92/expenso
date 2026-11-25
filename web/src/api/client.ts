@@ -88,6 +88,11 @@ export function openSession(): Promise<Bootstrap> {
   return request<Bootstrap>("/api/session", { method: "POST" }, QUICK_TIMEOUT_MS);
 }
 
+/** Clears the conversation on the server. Expenses and any draft are kept. */
+export function resetConversation(): Promise<Bootstrap> {
+  return withSession(() => request<Bootstrap>("/api/conversation/reset", { method: "POST" }, QUICK_TIMEOUT_MS));
+}
+
 export function sendChat(text: string): Promise<TurnResult> {
   return withSession(() => request<TurnResult>("/api/chat", json({ text }), TURN_TIMEOUT_MS));
 }

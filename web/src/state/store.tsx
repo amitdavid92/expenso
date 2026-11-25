@@ -33,6 +33,8 @@ export interface Actions {
   answerCurrency: (currency: string) => void;
   /** Sends the last message or photo again. */
   retry: () => void;
+  /** Clears the conversation and returns to the first screen. Expenses and any draft are kept. */
+  newConversation: () => void;
   /** Puts text in the composer for the user to finish. */
   seedComposer: (text: string) => void;
   seedUsed: () => void;
@@ -127,6 +129,18 @@ export function ExpensoProvider({ children }: { children: ReactNode }) {
         if (!attempt) return;
         if (attempt.kind === "chat") send(attempt.text);
         else sendPrepared(attempt.image, attempt.caption, attempt.preview);
+      },
+      newConversation: () => {
+        if (busy.current) return;
+        busy.current = true;
+        lastAttempt.current = null;
+        api
+          .resetConversation()
+          .then((bootstrap) => dispatch({ type: "conversation_reset", bootstrap }))
+          .catch(() => dispatch({ type: "turn_rejected", message: "The conversation could not be cleared. Please try again." }))
+          .finally(() => {
+            busy.current = false;
+          });
       },
       seedComposer: (text) => dispatch({ type: "seed", text }),
       seedUsed: () => dispatch({ type: "seed_used" }),

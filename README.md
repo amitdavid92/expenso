@@ -66,6 +66,8 @@ Open `http://localhost:5173`. A good first minute:
 3. Press **Confirm and submit**. The slip is stamped and appears in the ledger.
 4. Ask `Can I expense a $120 client dinner?`, or open the **Policy** tab and try an amount.
 5. Reload the page. The conversation, the ledger and any draft are still there.
+6. **New conversation** in the top bar clears the messages and brings back the first
+   screen. Submitted expenses and any draft stay.
 
 `npm run build` followed by `npm run dev:worker` serves the built app from the Worker at
 `http://localhost:8787`, the way production will.
@@ -205,6 +207,7 @@ All routes are under `/api` and scoped to the session. Types are in `shared/cont
 |---|---|---|
 | `POST /session` | Open the workspace; creates a session if there is none | No |
 | `POST /chat` | A text message | Yes |
+| `POST /conversation/reset` | New conversation: clears the messages, keeps expenses and any draft | No |
 | `POST /receipts` | A receipt photo (multipart `image`, optional `caption`) | Yes |
 | `POST /receipts/pending/currency` | Answer the currency question | No |
 | `POST /expenses/:id/confirm`, `/cancel` | Submit or discard that draft | No |

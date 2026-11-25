@@ -3,6 +3,7 @@ import { ValidationError } from "../src/lib/errors";
 import {
   MAX_MESSAGE_LENGTH,
   appendMessage,
+  clearConversation,
   listRecentMessages,
 } from "../src/services/conversations";
 import { db, newUser } from "./helpers";
@@ -68,6 +69,25 @@ describe("conversations", () => {
     await expect(appendMessage(db, user.id, role as never, content as never)).rejects.toThrow(
       ValidationError,
     );
+  });
+
+  it("clears one user's conversation and nobody else's", async () => {
+    const alice = await newUser();
+    const bob = await newUser();
+    await appendMessage(db, alice.id, "user", "one");
+    await appendMessage(db, alice.id, "assistant", "two");
+    await appendMessage(db, bob.id, "user", "bob's");
+
+    const removed = await clearConversation(db, alice.id);
+
+    expect(removed).toBe(2);
+    expect(await listRecentMessages(db, alice.id)).toEqual([]);
+    expect((await listRecentMessages(db, bob.id)).map((m) => m.content)).toEqual(["bob's"]);
+  });
+
+  it("clearing an empty conversation is harmless", async () => {
+    const user = await newUser();
+    expect(await clearConversation(db, user.id)).toBe(0);
   });
 
   it.each([0, -1, 1.5, 101])("rejects a limit of %s", async (limit) => {

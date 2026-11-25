@@ -61,6 +61,8 @@ export const initialState: State = {
 export type Action =
   | { type: "booted"; bootstrap: Bootstrap }
   | { type: "boot_failed" }
+  /** The user started a new conversation; `bootstrap` is the server's state afterwards. */
+  | { type: "conversation_reset"; bootstrap: Bootstrap }
   | { type: "turn_started"; turn: Exclude<Turn, { kind: "idle" }>; outgoing?: Outgoing }
   | { type: "turn_finished"; result: TurnResult }
   /** The server answered with a refusal (bad input, file too large…). */
@@ -96,6 +98,18 @@ export function reducer(state: State, action: Action): State {
 
     case "boot_failed":
       return { ...state, status: "boot_failed" };
+
+    case "conversation_reset":
+      // Only the talk goes. Whatever is on the desk is the server's to say.
+      return {
+        ...state,
+        messages: action.bootstrap.messages,
+        desk: action.bootstrap.desk,
+        outgoing: null,
+        failed: null,
+        notice: null,
+        receiptPreviews: {},
+      };
 
     case "turn_started":
       return {

@@ -146,6 +146,25 @@ describe("reducer", () => {
     expect(lost.desk?.currentSlip).not.toBeNull();
   });
 
+  it("empties the conversation on reset but keeps what is on the desk", () => {
+    const slip = expense({ id: 9 });
+    const state = ready({
+      messages: [message(1), message(2)],
+      receiptPreviews: { 1: "blob:x" },
+      notice: "something",
+      failed: { message: "lost" },
+      desk: desk({ currentSlip: slip }),
+    });
+
+    const reset = reducer(state, { type: "conversation_reset", bootstrap: { messages: [], desk: desk({ currentSlip: slip }) } });
+
+    expect(reset.messages).toEqual([]);
+    expect(reset.receiptPreviews).toEqual({});
+    expect(reset.notice).toBeNull();
+    expect(reset.failed).toBeNull();
+    expect(reset.desk?.currentSlip?.id).toBe(9);
+  });
+
   it("gives each composer seed a new key so the same text can be seeded twice", () => {
     const once = reducer(ready(), { type: "seed", text: "Change the amount to $" });
     const twice = reducer(reducer(once, { type: "seed_used" }), { type: "seed", text: "Change the amount to $" });

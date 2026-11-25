@@ -22,6 +22,7 @@ import { MAX_IMAGE_BYTES } from "../lib/images";
 import { toCents } from "../lib/money";
 import {
   type Message,
+  clearConversation,
   latestMessageId,
   listMessagesAfter,
   listRecentMessages,
@@ -248,7 +249,16 @@ export function webRoutes(makeDeps: (env: Env) => AssistantDeps) {
 
   // Every route below needs a session. They are listed, not wildcarded, so
   // that an unknown path is still an ordinary 404.
-  const PROTECTED = ["/chat", "/receipts", "/receipts/*", "/expenses", "/expenses/*", "/policy", "/policy/*"];
+  const PROTECTED = [
+    "/chat",
+    "/conversation/*",
+    "/receipts",
+    "/receipts/*",
+    "/expenses",
+    "/expenses/*",
+    "/policy",
+    "/policy/*",
+  ];
   web.on(["GET", "POST"], PROTECTED, async (c, next) => {
     const userId = await userFromCookie(c.get("deps").db, getCookie(c, SESSION_COOKIE));
     if (userId === null) {
@@ -263,6 +273,16 @@ export function webRoutes(makeDeps: (env: Env) => AssistantDeps) {
     const text = typeof body === "object" && body !== null ? (body as { text?: unknown }).text : undefined;
     if (typeof text !== "string") throw new ValidationError("Expected a JSON body with a text field.");
     return turn(c, (deps, userId) => handleMessage(deps, { userId, text }));
+  });
+
+  // "New conversation": forgets the talk, keeps the money. The draft, a pending
+  // receipt and everything submitted stay exactly as they are.
+  web.post("/conversation/reset", async (c) => {
+    const deps = c.get("deps");
+    const userId = c.get("userId");
+    await clearConversation(deps.db, userId);
+    const body: Bootstrap = { messages: [], desk: await buildDesk(deps.db, userId, nowOf(deps)) };
+    return c.json(body);
   });
 
   web.post("/receipts", async (c) => {

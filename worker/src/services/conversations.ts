@@ -77,6 +77,17 @@ export async function appendMessage(
   return toMessage(row!);
 }
 
+/**
+ * Deletes this user's conversation and returns how many messages went. Only
+ * the talk is removed: expenses, drafts and usage counters are separate tables
+ * and are not touched.
+ */
+export async function clearConversation(db: D1Database, userId: number): Promise<number> {
+  assertPositiveInt(userId, "User id");
+  const result = await db.prepare("DELETE FROM messages WHERE user_id = ?").bind(userId).run();
+  return result.meta.changes;
+}
+
 /** The id of this user's newest message, or 0 if they have none. */
 export async function latestMessageId(db: D1Database, userId: number): Promise<number> {
   assertPositiveInt(userId, "User id");

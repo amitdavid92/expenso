@@ -92,6 +92,12 @@ export const PlaneIcon = (p: Props) => (
   </Icon>
 );
 
+export const NewIcon = (p: Props) => (
+  <Icon {...p}>
+    <path d="M10 4.5v11M4.5 10h11" />
+  </Icon>
+);
+
 export const DiscardIcon = (p: Props) => (
   <Icon {...p}>
     <path d="M4.5 6h11M8 6V4.2h4V6M6 6l.6 9.8h6.8L14 6" />

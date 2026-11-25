@@ -376,6 +376,49 @@ describe("receipt upload", () => {
   });
 });
 
+describe("new conversation", () => {
+  it("clears the conversation but keeps the draft and everything already submitted", async () => {
+    const b = await browser();
+    const firstId = (await b.chat("$42 lunch", prepare(), say("Saved."))).desk.currentSlip!.id;
+    await b.post(`/api/expenses/${firstId}/confirm`);
+    await b.chat("$20 taxi", prepare({ amount: 20, merchant: "Metro Cabs", category: "travel" }), say("Saved."));
+
+    const res = await b.post("/api/conversation/reset");
+    const fresh = (await res.json()) as Bootstrap;
+
+    expect(res.status).toBe(200);
+    expect(fresh.messages).toEqual([]);
+    expect(fresh.desk.currentSlip).toMatchObject({ merchant: "Metro Cabs", status: "draft" });
+    expect(fresh.desk.month.summary).toMatchObject({ totalCents: 4200, count: 1 });
+    expect((await b.reload()).messages).toEqual([]);
+  });
+
+  it("starts the model with a clean history afterwards", async () => {
+    const b = await browser();
+    await b.chat("my project codename is Falcon", say("Noted."));
+    await b.post("/api/conversation/reset");
+
+    await b.chat("hello again", say("Hi."));
+
+    expect(JSON.stringify(llm.requests[0]!.messages)).not.toContain("Falcon");
+  });
+
+  it("does not touch another browser's conversation", async () => {
+    const alice = await browser();
+    const bob = await browser();
+    await bob.chat("bob's message", say("Hi Bob."));
+
+    await alice.post("/api/conversation/reset");
+
+    expect((await bob.reload()).messages).toHaveLength(2);
+  });
+
+  it("needs a session", async () => {
+    const res = await app.request("/api/conversation/reset", { method: "POST" }, env);
+    expect(res.status).toBe(401);
+  });
+});
+
 describe("expenses and policy pages", () => {
   it("lists the user's submitted expenses and applies filters", async () => {
     const b = await browser();
