@@ -10,6 +10,17 @@ Built for the Navan Full Stack Engineer home assignment.
 
 No registration required. All expense data and company policies are fictional. Please do not upload real receipts or confidential information.
 
+![Expenso web app: a scanned receipt becomes a draft expense slip with a policy check](docs/screenshots/web-desktop.png)
+
+## Cross-channel experience
+
+<table>
+  <tr>
+    <td width="64%" valign="top"><img src="docs/screenshots/telegram.png" alt="Telegram: a receipt photo returns a draft with Confirm, Discard and Continue on web buttons"></td>
+    <td width="36%" valign="top"><img src="docs/screenshots/expense-submitted.png" alt="Web: the submitted expense slip and ledger in a browser connected to Telegram"></td>
+  </tr>
+</table>
+
 ## Try it in two minutes
 
 1. Open the [Telegram bot](https://t.me/GetExpensoBot), send `/start`, then upload a [sample receipt](worker/samples/receipt-cafe-aurora.png).
