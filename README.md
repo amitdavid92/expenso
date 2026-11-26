@@ -4,11 +4,54 @@
 describe an expense, correct it in conversation, and submit it with an explicit confirmation.
 
 Home assignment for a Full Stack Engineer position. All expense data and company
-policies are fictional.
+policies are fictional. **Status: complete and deployed.**
 
-> **Status:** work in progress. The backend, the AI assistant, receipt analysis, the web
-> app, the Telegram bot and the hand-off between them are in place and run locally (the bot
-> through a Cloudflare tunnel). Still to come: public deployment and demo video (Phase 7).
+## Live demo
+
+| | |
+|---|---|
+| Web app | https://expenso.expenso-worker.workers.dev |
+| Telegram bot | [@GetExpensoBot](https://t.me/GetExpensoBot) |
+
+No sign-up is needed. Please use fictional data only: don't upload real receipts.
+
+**The signature feature: one conversation, two channels.** Start with a receipt in Telegram,
+press **Continue on web**, and the same conversation, draft and ledger open in the browser.
+Submit there and Telegram is told. The link is a single-use, short-lived key, and no data is
+copied or merged ([how it works](#one-conversation-two-channels)).
+
+### Five-minute review
+
+1. **Web.** Press **Try the sample**, then type `The total was actually $52 with the tip`.
+   The same slip changes. Press **Confirm and submit**.
+2. **Policy.** Ask `Can I expense a $120 client dinner?`, or try an amount on the **Policy** tab.
+3. **Telegram.** Send `/start`, then a photo of a receipt
+   ([a fictional sample](worker/samples/receipt-cafe-aurora.png) works). Correct something in
+   a follow-up message.
+4. **Handoff.** Under the draft press **Continue on web ↗**, confirm the card, and submit on
+   the web. Telegram receives a note; the old Telegram Confirm button can no longer submit.
+5. **Desktop.** Send `/web` to the bot and type the code under **Telegram** in the web app.
+   `/signout` signs every browser out.
+6. **Failure handling.** Send a picture that is not a receipt, or reuse an old link.
+
+The demo runs on Gemini's free tier with a shared daily allowance. If the model is busy or
+the allowance is used up, the app says so; confirming and discarding still work.
+
+## Architecture
+
+```
+ Telegram ──webhook──▶ ┌─────────────── one Cloudflare Worker (Hono) ───────────────┐
+                       │ adapters/telegram ─┐                                        │
+ Browser ───HTTPS───▶  │ adapters/web ──────┼─▶ assistant ─▶ tools ─▶ services ──────┼─▶ D1
+ (React app served as  │                    │       │        (policy, expenses,      │
+  static assets)       │                    │       ▼         limits, sessions)      │
+                       │                    │   llm/gemini ──▶ Gemini API            │
+                       └────────────────────┴────────────────────────────────────────┘
+```
+
+Adapters translate a channel into calls on the shared assistant and know no expense rules.
+Confirm and discard go from an adapter to the services without involving the model. The model
+sits behind an `LlmClient` interface, which is how tests run without it.
 
 ## The idea
 
@@ -30,7 +73,7 @@ the category limit) rather than a coloured badge.
 | Language model | Google Gemini (`gemini-3.5-flash-lite`, free tier): tool calling and image input |
 | Tests | Vitest; backend tests run inside the local Workers runtime |
 
-Everything runs locally and on free tiers. No paid billing is needed.
+Development and production use free tiers only. No paid billing is needed.
 
 ## Local setup
 
@@ -61,7 +104,7 @@ npm run dev:web               # web app on http://localhost:5173 (proxies /api t
 
 Open `http://localhost:5173`. A good first minute:
 
-1. Press **Use the sample receipt**. A fictional receipt is read and becomes a draft slip.
+1. Press **Try the sample**. A fictional receipt is read and becomes a draft slip.
 2. Type `The total was actually $52 with the tip`. The same slip changes.
 3. Press **Confirm and submit**. The slip is stamped and appears in the ledger.
 4. Ask `Can I expense a $120 client dinner?`, or open the **Policy** tab and try an amount.
@@ -122,7 +165,8 @@ web/
 - A user has at most one draft, enforced by a unique index in the database.
 - Confirm and cancel are atomic and safe to repeat; an outdated draft id is refused.
 - Policy is checked when a draft is created and again when it is confirmed.
-- Every query is scoped to one user. Web and Telegram users are never linked.
+- Every query is scoped to one account. A browser reaches a Telegram account only through
+  the handoff described below; accounts are never merged.
 - Usage limits, per user and for the whole application, protect the free Gemini quota.
 
 ## How the assistant works
@@ -173,7 +217,7 @@ submitted automatically. The image is not stored: it is sent to the model and dr
 The assistant's replies carry typed *cards* (a draft event, a receipt analysis, a policy
 check, a spending summary) next to plain text. The web app renders cards with its own
 components; the model never produces markup. The plain text stays complete on its own,
-which is what the terminal chat shows and what Telegram will show.
+which is what the terminal chat shows; Telegram renders the same cards as messages.
 
 An expense card stores only the expense's id. Whoever displays it gets the expense as it
 is now, so an old "draft created" line can truthfully say it was since replaced or submitted.
@@ -202,7 +246,7 @@ is now, so an old "draft created" line can truthfully say it was since replaced 
 
 ### Web API
 
-All routes are under `/api` and scoped to the session. Types are in `shared/contract.ts`.
+All routes are under `/api` and scoped to the session's account. Types are in `shared/contract.ts`.
 
 | Method & path | Purpose | Uses the model |
 |---|---|---|
@@ -214,6 +258,10 @@ All routes are under `/api` and scoped to the session. Types are in `shared/cont
 | `POST /expenses/:id/confirm`, `/cancel` | Submit or discard that draft | No |
 | `GET /expenses` | The user's expenses, with filters | No |
 | `GET /policy`, `GET /policy/check` | Limits and rules; a verdict for an amount | No |
+| `POST /link/preview`, `/link/redeem` | Check, then use, a Telegram link or code | No |
+| `POST /session/disconnect` | Sign this browser out of its Telegram account | No |
+
+`POST /webhooks/telegram` receives the bot's updates and `GET /api/health` is the liveness check.
 
 Every turn answers with the messages it added **and** the fresh desk state (current slip,
 pending receipt, this month's figures, recent expenses), so the conversation, the slip and
@@ -228,8 +276,8 @@ the ledger cannot disagree. All figures come from the database; the browser tota
   format, whatever type the browser claims.
 - The static app is served with a Content-Security-Policy; the built bundle contains no
   secrets. API keys exist only in the Worker.
-- There is no login. A session is anonymous and lives in one browser; clearing cookies
-  starts a new one. This is a demo, and the interface says so.
+- There is no password login. A new browser gets an anonymous guest workspace; it can be
+  connected to a Telegram account through the handoff. This is a demo, and the interface says so.
 
 ### Design
 
@@ -250,7 +298,7 @@ Screenshots from before and after the visual refinement pass are in `docs/screen
 - Keyboard: Enter sends, Shift+Enter adds a line, every control is reachable with Tab,
   and focus is always visible. Motion is switched off under "reduce motion".
 
-The Telegram entry in the top bar only explains what is coming. Nothing is connected yet.
+The Telegram entry in the top bar shows the connection, takes a handoff code and disconnects.
 
 ## Telegram
 
@@ -281,12 +329,12 @@ How it is protected:
   seconds, inside Cloudflare's 30-second window, leaving time to say it took too long.
 - Telegram puts the bot token in every URL, including file downloads. No URL is ever
   logged or put in an error; logs carry a method name, a kind and a status only.
-- A Telegram user and a web session are separate users. Linking them is Phase 6.
+- A Telegram user and a web guest are separate accounts unless connected by the handoff.
 
 ### Connecting the bot
 
-Telegram delivers only to a public HTTPS address, so this needs a deployed Worker (Phase 7)
-or a tunnel to your machine.
+Telegram delivers only to a public HTTPS address, so this needs a deployed Worker or a
+tunnel to your machine.
 
 ```bash
 npm run telegram -- info       # which bot the token belongs to, and its current webhook
@@ -294,6 +342,9 @@ npm run telegram -- secret     # prints a new random secret; add it to worker/.d
 npm run telegram -- set https://<public-address>
 npm run telegram -- delete     # stop deliveries
 ```
+
+The live bot's webhook points at the production Worker. Use a separate bot for local
+experiments: registering another address takes the live demo's bot offline.
 
 The token and secret are read from `worker/.dev.vars` and never printed. The Worker that
 receives the webhook must have the same `TELEGRAM_WEBHOOK_SECRET` (`wrangler secret put`
@@ -390,6 +441,38 @@ as `PUBLIC_WEB_URL=https://….trycloudflare.com`, restart `npm run dev:worker`,
 receipt to the bot and press **Continue on web**. On a computer, open the tunnel address,
 choose **Telegram** in the top bar, and enter the code from `/web`.
 
+## Deployment
+
+One Worker serves the API, the Telegram webhook and the built web app; data lives in D1.
+
+```bash
+cd worker
+npx wrangler login
+npx wrangler d1 create expenso          # put the returned database_id in wrangler.jsonc
+npx wrangler d1 migrations apply expenso --remote
+npm run build --prefix ..               # static assets come from web/dist
+npx wrangler deploy
+npx wrangler secret put GEMINI_API_KEY
+npx wrangler secret put TELEGRAM_BOT_TOKEN
+npx wrangler secret put TELEGRAM_WEBHOOK_SECRET
+cd .. && npm run telegram -- set https://<your-worker>.workers.dev
+```
+
+- Set `PUBLIC_WEB_URL` in `wrangler.jsonc` to the deployed address, then deploy again.
+- `TELEGRAM_WEBHOOK_SECRET` must equal the value in `worker/.dev.vars`, which the
+  registration script reads.
+- Later releases: apply any new migrations, `npm run build`, `npx wrangler deploy`.
+
+## Free-tier limits
+
+| Service | Free allowance relied on |
+|---|---|
+| Cloudflare Workers | 100,000 requests a day, 10 ms CPU per request, 50 outbound requests per invocation, about 30 s of background work |
+| Static assets | Free |
+| Cloudflare D1 | 500 MB per database, 5 million rows read and 100,000 written a day |
+| Gemini `gemini-3.5-flash-lite` | 15 requests a minute, 500 a day; the app caps itself at 12 and 400 |
+| Telegram Bot API | Free |
+
 ## Known limitations
 
 - Dates are evaluated in UTC. Shortly after midnight in a timezone ahead of UTC,
@@ -421,3 +504,10 @@ choose **Telegram** in the top bar, and enter the code from `/web`.
   (the local Workers simulator). It is a development-only dependency and has been stable
   here. If it causes trouble, the fallback is to pin `wrangler` to the last release that
   bundles a stable Miniflare.
+- No approval or reimbursement workflow, and no password or SSO login.
+- The fictional sample receipts are dated November 2026. Once they are more than 90 days
+  old, policy refuses them; send a newer fictional receipt instead.
+- Creating anonymous guest sessions is not rate-limited, and old Telegram update ids and
+  expired sessions are not pruned. Both are fine at demo scale.
+- The web interface has no automated browser tests; state logic and formatting are unit-tested
+  and the interface was checked by hand.

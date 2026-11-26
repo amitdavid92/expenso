@@ -24,16 +24,17 @@
     "USER_DAILY_LLM_LIMIT": "60",
     "APP_DAILY_LLM_LIMIT": "400",
     // Rolling 60-second window, whole application.
-    "APP_PER_MINUTE_LLM_LIMIT": "12"
+    "APP_PER_MINUTE_LLM_LIMIT": "12",
+    // Public address of the web app; handoff links point here. Local .dev.vars overrides it.
+    "PUBLIC_WEB_URL": "https://expenso.expenso-worker.workers.dev"
   },
 
   "d1_databases": [
     {
       "binding": "DB",
       "database_name": "expenso",
-      // Placeholder: replaced with the real id when the remote database is created (Phase 5).
-      // Local development and tests do not use it.
-      "database_id": "00000000-0000-0000-0000-000000000000",
+      // The production database. Local development and tests use a local copy.
+      "database_id": "5cdf72b4-422d-4b98-9466-2861b7700dfc",
       "migrations_dir": "migrations"
     }
   ]
